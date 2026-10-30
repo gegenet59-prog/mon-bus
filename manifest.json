@@ -1,0 +1,16 @@
+{
+  "name": "Mon bus",
+  "short_name": "Mon bus",
+  "description": "Prochains passages Lille (Ilevia) et Paris (Île-de-France Mobilités), au clavier ou à la voix",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#d6001c",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icone-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

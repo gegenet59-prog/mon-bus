@@ -3,6 +3,7 @@
 
 Télécharge le GTFS officiel d'Ilevia et écrit :
   - horaires/stations.json : nom d'arrêt normalisé -> liste de préfixes de quais (ex. REP)
+  - horaires/arrets.json : nom d'arrêt normalisé -> [latitude, longitude] (pour « Autour de moi »)
   - horaires/<PREFIXE>.json : passages théoriques de tous les quais de cet arrêt,
     pour aujourd'hui et demain (+ la nuit d'hier après minuit), heure de Paris
 
@@ -71,9 +72,15 @@ def main():
 
     # Quais (location_type 0) : code -> préfixe de 3 lettres, et nom d'arrêt
     stations = defaultdict(set)
+    positions = defaultdict(list)
     for l in lire(z, "stops.txt"):
         if l["location_type"] == "0" and len(l["stop_id"]) >= 4:
-            stations[normaliser(l["stop_name"])].add(l["stop_id"][:3])
+            nom = normaliser(l["stop_name"])
+            stations[nom].add(l["stop_id"][:3])
+            try:
+                positions[nom].append((float(l["stop_lat"]), float(l["stop_lon"])))
+            except ValueError:
+                pass
 
     # On ne garde que les départs (pas le terminus d'arrivée) : dernier arrêt exclu
     dernier = {}
@@ -106,6 +113,11 @@ def main():
     index = {nom: sorted(p) for nom, p in stations.items()}
     with open(os.path.join(sortie, "stations.json"), "w", encoding="utf-8") as f:
         json.dump({"genere": genere, "stations": index}, f, ensure_ascii=False, separators=(",", ":"))
+    # Position moyenne des quais de chaque arrêt
+    arrets = {nom: [round(sum(p[0] for p in pts) / len(pts), 5), round(sum(p[1] for p in pts) / len(pts), 5)]
+              for nom, pts in positions.items() if pts}
+    with open(os.path.join(sortie, "arrets.json"), "w", encoding="utf-8") as f:
+        json.dump(arrets, f, ensure_ascii=False, separators=(",", ":"))
     print(f"{len(passages)} arrêts, {sum(len(v) for v in passages.values())} passages, {len(index)} noms")
 
 
