@@ -131,30 +131,31 @@ function preciserBoucle(p) {
 }
 
 // --- Horaires théoriques (fichiers régénérés chaque nuit par GitHub Actions) ---
-let INDEX = null;
+// INDEX : nom -> identifiants d'arrêts (un par commune) · QUAIS : identifiant -> codes de quais
+let INDEX = null, QUAIS = {};
 const CACHE = {};
 async function chargerIndex() {
   if (INDEX) return INDEX;
-  try { INDEX = (await (await fetch("horaires/stations.json")).json()).stations; }
+  try { const d = await (await fetch("horaires/stations.json")).json(); INDEX = d.stations; QUAIS = d.quais || {}; }
   catch { INDEX = {}; }
   return INDEX;
 }
-async function chargerHoraires(prefixe) {
-  if (!CACHE[prefixe]) {
-    try { const r = await fetch(`horaires/${prefixe}.json`); CACHE[prefixe] = r.ok ? (await r.json()).passages : []; }
-    catch { CACHE[prefixe] = []; }
+async function chargerHoraires(id) {
+  if (!CACHE[id]) {
+    try { const r = await fetch(`horaires/${id}.json`); CACHE[id] = r.ok ? (await r.json()).passages : []; }
+    catch { CACHE[id] = []; }
   }
-  return CACHE[prefixe];
+  return CACHE[id];
 }
 
 // Temps réel : passages Ilevia d'un arrêt (le flux ne donne que 1 ou 2 bus par ligne).
-// On cherche par code de quai (ex. PDO…) car le nom peut différer (« LILLE PORTE DE DOUAI » vs « Porte de Douai »).
-async function chargerTempsReel(nomArret, prefixes) {
-  if (prefixes && prefixes.length) {
+// On cherche par code de quai (ex. REP003) car le nom peut différer (« LILLE PORTE DE DOUAI » vs « Porte de Douai »).
+async function chargerTempsReel(nomArret, quais) {
+  if (quais && quais.length) {
     const params = new URLSearchParams({
       service: "WFS", version: "2.0.0", request: "GetFeature",
       typeNames: "dsp_ilevia:prochains_passages", outputFormat: "application/json",
-      CQL_FILTER: prefixes.map(x => `code_arret_physique LIKE '${x.replace(/[^A-Z0-9]/g, "")}%'`).join(" OR ")
+      CQL_FILTER: `code_arret_physique IN (${quais.map(q => `'${q.replace(/[^A-Z0-9]/g, "")}'`).join(",")})`
     });
     return (await (await fetch(`${WFS}?${params}`)).json()).features.map(f => f.properties);
   }
@@ -248,8 +249,11 @@ async function chercherLille(arret, force) {
   const index = await chargerIndex();
   const nom = force?.nom || meilleurNom(Object.keys(index), arret) || arret.join(" ");
   let tempsReel = [], tempsReelOk = true;
-  try { tempsReel = await chargerTempsReel(nom, index[nom]); } catch { tempsReelOk = false; }
-  const prevus = (await Promise.all((index[nom] || []).map(chargerHoraires))).flat();
+  // Arrêt précis (Autour de moi) ou tous les arrêts de ce nom (ex. Wagner à Lille ET à Wattrelos)
+  const ids = force?.id ? [force.id] : (index[nom] || []);
+  const quais = ids.flatMap(id => QUAIS[id] || []);
+  try { tempsReel = await chargerTempsReel(nom, quais); } catch { tempsReelOk = false; }
+  const prevus = (await Promise.all(ids.map(chargerHoraires))).flat();
 
   const maintenant = new Date(), items = [];
   for (const p of tempsReel) {
@@ -266,7 +270,8 @@ async function chercherLille(arret, force) {
     const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
     items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
   }
-  return { nom, titre: nom, items, tempsReelOk };
+  const titreArret = force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom;
+  return { nom, titre: titreArret, items, tempsReelOk };
 }
 
 // ===================== PARIS (Île-de-France Mobilités / PRIM) =====================
@@ -518,7 +523,7 @@ async function autourDeMoi() {
           .sort((x, y) => x.m - y.m).slice(0, 5);
       } else {
         ARRETS_LILLE ??= await (await fetch("horaires/arrets.json")).json();
-        proches = Object.entries(ARRETS_LILLE).map(([nom, [a, b]]) => ({ nom, m: distance(la, lo, a, b), force: { nom } }))
+        proches = ARRETS_LILLE.map(([id, nom, commune, a, b]) => ({ nom, m: distance(la, lo, a, b), force: { nom, id, commune } }))
           .sort((x, y) => x.m - y.m).slice(0, 5);
       }
     } catch { $("statut").textContent = "Impossible de trouver les arrêts proches."; return; }

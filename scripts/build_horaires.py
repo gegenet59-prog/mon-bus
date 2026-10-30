@@ -2,9 +2,10 @@
 """Fabrique les horaires théoriques Ilevia pour l'appli « Mon bus ».
 
 Télécharge le GTFS officiel d'Ilevia et écrit :
-  - horaires/stations.json : nom d'arrêt normalisé -> liste de préfixes de quais (ex. REP)
-  - horaires/arrets.json : nom d'arrêt normalisé -> [latitude, longitude] (pour « Autour de moi »)
-  - horaires/<PREFIXE>.json : passages théoriques de tous les quais de cet arrêt,
+  - horaires/stations.json : nom d'arrêt normalisé -> identifiants d'arrêts (un par commune : « Wagner »
+    existe à Lille et à Wattrelos), et identifiant -> codes de ses quais (ex. REP003, REP005)
+  - horaires/arrets.json : [identifiant, nom, commune, latitude, longitude] (pour « Autour de moi »)
+  - horaires/<IDENTIFIANT>.json : passages théoriques de tous les quais de cet arrêt,
     pour aujourd'hui et demain (+ la nuit d'hier après minuit), heure de Paris
 
 Usage : python3 scripts/build_horaires.py [chemin_ou_url_du_gtfs.zip] [dossier_sortie]
@@ -70,15 +71,27 @@ def main():
             trajets[l["trip_id"]] = (lignes.get(l["route_id"], l["route_id"]),
                                      l["trip_headsign"], services[l["service_id"]])
 
-    # Quais (location_type 0) : code -> préfixe de 3 lettres, et nom d'arrêt
-    stations = defaultdict(set)
+    # Arrêts (location_type 1) et leurs quais (location_type 0, rattachés par parent_station).
+    # On regroupe par arrêt et non par nom : deux communes peuvent avoir un arrêt du même nom.
+    stations = defaultdict(set)      # nom -> identifiants d'arrêts
+    quais = defaultdict(list)        # identifiant d'arrêt -> codes de quais
     positions = defaultdict(list)
+    infos = {}                       # identifiant -> (nom, commune)
+    parent_de = {}
     for l in lire(z, "stops.txt"):
-        if l["location_type"] == "0" and len(l["stop_id"]) >= 4:
-            nom = normaliser(l["stop_name"])
-            stations[nom].add(l["stop_id"][:3])
+        if l["location_type"] == "1":
+            # stop_desc : "WAGNER 59000 LILLE" -> commune après le code postal
+            desc = l["stop_desc"].split()
+            cp = next((i for i, m in enumerate(desc) if m.isdigit() and len(m) == 5), None)
+            commune = " ".join(desc[cp + 1:]).title() if cp is not None else ""
+            infos[l["stop_id"]] = (normaliser(l["stop_name"]), commune)
+        elif l["location_type"] == "0" and l["parent_station"]:
+            pid = l["parent_station"]
+            parent_de[l["stop_id"]] = pid
+            stations[normaliser(l["stop_name"])].add(pid)
+            quais[pid].append(l["stop_id"])
             try:
-                positions[nom].append((float(l["stop_lat"]), float(l["stop_lon"])))
+                positions[pid].append((float(l["stop_lat"]), float(l["stop_lon"])))
             except ValueError:
                 pass
 
@@ -102,20 +115,22 @@ def main():
         for d in dates:
             if d == hier and heure < "24:00":
                 continue  # d'hier, on ne garde que la nuit (24:xx, 25:xx...)
-            passages[quai[:3]].append([d, heure, ligne, direction, quai])
+            if quai in parent_de:
+                passages[parent_de[quai]].append([d, heure, ligne, direction, quai])
 
     os.makedirs(sortie, exist_ok=True)
     genere = datetime.now(PARIS).isoformat(timespec="minutes")
-    for prefixe, liste in passages.items():
+    for pid, liste in passages.items():
         liste.sort()
-        with open(os.path.join(sortie, f"{prefixe}.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(sortie, f"{pid}.json"), "w", encoding="utf-8") as f:
             json.dump({"genere": genere, "passages": liste}, f, ensure_ascii=False, separators=(",", ":"))
     index = {nom: sorted(p) for nom, p in stations.items()}
     with open(os.path.join(sortie, "stations.json"), "w", encoding="utf-8") as f:
-        json.dump({"genere": genere, "stations": index}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"genere": genere, "stations": index, "quais": quais}, f, ensure_ascii=False, separators=(",", ":"))
     # Position moyenne des quais de chaque arrêt
-    arrets = {nom: [round(sum(p[0] for p in pts) / len(pts), 5), round(sum(p[1] for p in pts) / len(pts), 5)]
-              for nom, pts in positions.items() if pts}
+    arrets = [[pid, infos.get(pid, ("", ""))[0], infos.get(pid, ("", ""))[1],
+               round(sum(p[0] for p in pts) / len(pts), 5), round(sum(p[1] for p in pts) / len(pts), 5)]
+              for pid, pts in positions.items() if pts]
     with open(os.path.join(sortie, "arrets.json"), "w", encoding="utf-8") as f:
         json.dump(arrets, f, ensure_ascii=False, separators=(",", ":"))
     print(f"{len(passages)} arrêts, {sum(len(v) for v in passages.values())} passages, {len(index)} noms")
