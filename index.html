@@ -35,6 +35,8 @@
   #statut { margin-top:12px; color:var(--gris); }
   .prevu { color:var(--gris); font-weight:600; }
   .prevu i { font-weight:400; font-size:12px; }
+  .retard { color:#c2410c; font-size:13px; }
+  .supprime { color:#b91c1c; text-decoration:line-through; }
   #villes { display:flex; gap:8px; margin-bottom:12px; }
   #villes button { flex:1; padding:12px; font-weight:700; background:#fff; color:var(--texte); border:2px solid #ddd; }
   #gps { width:100%; padding:13px; margin-bottom:12px; background:#fff; color:var(--texte); border:2px solid var(--texte); font-weight:700; }
@@ -298,7 +300,9 @@ function habillerLille(it) {
 }
 async function chercherLille(arret, force) {
   const index = await chargerIndex();
-  const nom = force?.nom || meilleurNom(Object.keys(index), arret) || arret.join(" ");
+  const gares = await chargerGaresTer();
+  const nomsGares = Object.fromEntries(gares.map(g => [normaliser(g[1]), g]));
+  const nom = force?.nom || meilleurNom([...Object.keys(index), ...Object.keys(nomsGares)], arret) || arret.join(" ");
   let tempsReel = [], tempsReelOk = true;
   // Arrêt précis (Autour de moi) ou tous les arrêts de ce nom (ex. Wagner à Lille ET à Wattrelos)
   const ids = force?.id ? [force.id] : (index[nom] || []);
@@ -322,8 +326,109 @@ async function chercherLille(arret, force) {
     items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
   }
   for (let i = 0; i < items.length; i++) items[i] = habillerLille(items[i]);
+
+  // TER : la gare portant ce nom, ou les gares à moins de 500 m de l'arrêt choisi
+  let garesProches = nomsGares[nom] ? [nomsGares[nom]] : [];
+  if (!garesProches.length && ids.length) {
+    ARRETS_LILLE ??= await (await fetch("horaires/arrets.json")).json().catch(() => []);
+    const pos = ARRETS_LILLE.filter(a => ids.includes(a[0]));
+    garesProches = gares.filter(g => pos.some(a => distance(a[3], a[4], g[2], g[3]) < 500));
+  }
+  if (garesProches.length) items.push(...await trainsTer(garesProches, maintenant, limite, nom));
   const titreArret = force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom;
   return { nom, titre: titreArret, items, tempsReelOk };
+}
+
+// ===================== TER (SNCF) dans la métropole lilloise =====================
+let GARES_TER = null;
+const CACHE_TER = {};
+async function chargerGaresTer() {
+  if (!GARES_TER) {
+    try { GARES_TER = await (await fetch("horaires/ter/gares.json")).json(); } catch { GARES_TER = []; }
+  }
+  return GARES_TER;
+}
+
+// Lecture minimale du format protobuf (GTFS-RT) : pas de bibliothèque à charger
+function lireProto(buf, debut = 0, fin = buf.length) {
+  const champs = [];
+  let i = debut;
+  const varint = () => { let r = 0n, d = 0n, o; do { o = buf[i++]; r |= BigInt(o & 127) << d; d += 7n; } while (o & 128); return r; };
+  while (i < fin) {
+    const cle = Number(varint()), num = cle >> 3, type = cle & 7;
+    if (type === 0) champs.push([num, varint()]);
+    else if (type === 2) { const n = Number(varint()); champs.push([num, [i, i + n]]); i += n; }
+    else if (type === 1) i += 8;
+    else if (type === 5) i += 4;
+    else break;
+  }
+  return champs;
+}
+const texteProto = (buf, [a, b]) => new TextDecoder().decode(buf.subarray(a, b));
+const entier = v => { const n = BigInt.asIntN(64, v); return Number(n); };
+
+// Retards et suppressions SNCF : flux national léger (seuls les trains perturbés y figurent).
+// Relu au plus une fois par minute. Clé : n° de train + date -> { supprime, gares: { UIC: { retard, supprime } } }
+let RT_SNCF = { t: 0, data: null };
+async function retardsSncf() {
+  if (RT_SNCF.data && Date.now() - RT_SNCF.t < 60000) return RT_SNCF.data;
+  const buf = new Uint8Array(await (await fetch("https://proxy.transport.data.gouv.fr/resource/sncf-gtfs-rt-trip-updates")).arrayBuffer());
+  const data = {};
+  for (const [n, ent] of lireProto(buf)) {
+    if (n !== 2) continue;
+    for (const [m, tu] of lireProto(buf, ...ent)) {
+      if (m !== 3) continue;
+      let tripId = "", date = "", supprime = false;
+      const gares = {};
+      for (const [k, v] of lireProto(buf, ...tu)) {
+        if (k === 1) for (const [x, y] of lireProto(buf, ...v)) {
+          if (x === 1) tripId = texteProto(buf, y);
+          if (x === 3) date = texteProto(buf, y);
+          if (x === 4 && y === 3n) supprime = true;          // CANCELED
+        }
+        if (k === 2) {
+          let stop = "", retard = null, saute = false;
+          for (const [x, y] of lireProto(buf, ...v)) {
+            if ((x === 2 || x === 3) && Array.isArray(y)) for (const [a, b] of lireProto(buf, ...y)) if (a === 1 && (x === 3 || retard === null)) retard = entier(b);
+            if (x === 4) stop = texteProto(buf, y);
+            if (x === 5 && y === 1n) saute = true;             // SKIPPED
+          }
+          const uic = stop.split("-").pop();
+          if (uic) gares[uic] = { retard, supprime: saute };
+        }
+      }
+      const numero = (tripId.match(/OCESN(\d+)[A-Z]/) || [])[1];
+      if (!numero) continue;
+      // Un même train peut apparaître plusieurs fois : on fusionne les informations
+      const cle = `${numero}|${date || (tripId.match(/:(\d{8})(?::\d+)?$/) || [])[1]}`;
+      const deja = data[cle];
+      data[cle] = deja ? { supprime: deja.supprime || supprime, gares: { ...deja.gares, ...gares } } : { supprime, gares };
+    }
+  }
+  RT_SNCF = { t: Date.now(), data };
+  return data;
+}
+
+async function trainsTer(gares, maintenant, limite, nomArret = "") {
+  let rt = {};
+  try { rt = await retardsSncf(); } catch {}
+  const items = [];
+  for (const [uic, nomGare] of gares) {
+    if (!CACHE_TER[uic]) { try { CACHE_TER[uic] = await (await fetch(`horaires/ter/${uic}.json`)).json(); } catch { CACHE_TER[uic] = []; } }
+    for (const [d, hm, ligne, destination, numero, couleur, texte] of CACHE_TER[uic]) {
+      const [H, M] = hm.split(":").map(Number);
+      const prevue = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), H, M);
+      const info = rt[`${numero}|${d}`];
+      const g = info?.gares?.[uic];
+      const retard = g?.retard ? Math.round(g.retard / 60) : 0;
+      const h = new Date(prevue.getTime() + retard * 60000);
+      if (h < new Date(maintenant.getTime() - 60000) || prevue > limite) continue;
+      items.push({ ligne, code: ligne, mode: "TRAIN", nomMode: "TER", sens: normaliser(destination) + (gares.length > 1 && !normaliser(nomGare).split(" ").every(m => nomArret.split(" ").includes(m)) ? ` (DEPUIS ${normaliser(nomGare)})` : ""), h, couleur, texte,
+                   prevu: !info, retard, supprime: !!(info?.supprime || g?.supprime), independant: true,
+                   });
+    }
+  }
+  return items;
 }
 
 // ===================== PARIS (Île-de-France Mobilités / PRIM) =====================
@@ -429,6 +534,10 @@ function afficher(r, liste, question, opts) {
   for (const it of liste) (groupes[it.mode + "|" + it.ligne + "|" + it.sens] ??= []).push(it);
   const lignesAff = [];
   for (const [cle, tous] of Object.entries(groupes)) {
+    if (tous.every(i => i.independant)) {   // TER : chaque horaire est un train différent
+      lignesAff.push([cle, [...tous].sort((a, b) => a.h - b.h).slice(0, 2)]);
+      continue;
+    }
     const reels = tous.filter(i => !i.prevu).sort((a, b) => a.h - b.h);
     const prevus = tous.filter(i => i.prevu).sort((a, b) => a.h - b.h);
     const dernierReel = reels.length ? reels[reels.length - 1].h.getTime() + 2 * 60000 : 0;
@@ -451,7 +560,10 @@ function afficher(r, liste, question, opts) {
   }
   const favori = lireListe("favoris").includes(question);
   html += `<div class="actions"><button id="btnFavori">${favori ? "★ Dans tes favoris" : "☆ Ajouter aux favoris"}</button><button id="btnEcouter">🔊 Écouter</button></div>`;
-  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : "Ilevia"} · mise à jour auto toutes les 30 s</p>`;
+  if (VILLE === "LILLE" && lignesAff.some(([, c]) => c[0].mode === "TRAIN"))
+    html += `<p class="aide">🎫 Les tickets Ilevia sont valables dans le TER pour voyager entre deux gares de la métropole.
+             <a href="https://www.ter.sncf.com/hauts-de-france/tarifs-cartes/autres-tarifs-ter/tarifs-transports-en-commun/voyager-en-ter-aux-tarifs-ilevia">Conditions sur ter.sncf.com</a></p>`;
+  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : "Ilevia / SNCF"} · mise à jour auto toutes les 30 s</p>`;
   $("resultats").innerHTML = html;
   $("btnFavori").onclick = () => { basculerFavori(question); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
@@ -463,7 +575,9 @@ const hhmm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-di
 function quand(p, maintenant, petit) {
   const min = Math.floor((p.h - maintenant) / 60000);
   const demain = p.h.toDateString() !== maintenant.toDateString();
+  if (p.supprime) return `<span class="supprime">${hhmm(p.h)} supprimé</span>`;
   let txt = demain ? `demain ${hhmm(p.h)}` : min <= 0 ? "à l'approche" : min < 60 ? `${min} min` : hhmm(p.h);
+  if (p.retard > 0) txt += ` <span class="retard">+${p.retard}</span>`;
   return p.prevu ? `<span class="prevu">${txt} <i>prévu</i></span>` : `${txt}${petit ? "" : " 📡"}`;
 }
 
