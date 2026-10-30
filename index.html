@@ -210,14 +210,40 @@ $("gps").onclick = () => autourDeMoi();
 
 // Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
 const motsUtiles = nom => nom.split(" ").filter(m => !VIDES.has(m));
+// Deux mots « pareils » malgré une faute de frappe ou un pluriel (FLANDRE / FLANDRES, REPUBLIQE / REPUBLIQUE)
+function proche(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) >= 3 && (a + "S" === b || b + "S" === a || a + "X" === b || b + "X" === a)) return true;
+  if (a.length < 4 || b.length < 4) return false;
+  if (Math.abs(a.length - b.length) > 1 || Math.min(a.length, b.length) < 5) return false;
+  let i = 0, j = 0, diff = 0;          // au plus une lettre différente (en trop, en moins ou changée)
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diff > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return diff + (a.length - i) + (b.length - j) <= 1;
+}
+// Choix de l'arrêt : celui dont tous les mots sont dans la question et qui en reprend le plus
+// (« Gare Lille Flandre » -> GARE LILLE FLANDRES, et pas l'arrêt « GARE »)
 function meilleurNom(noms, arret) {
-  const q = new Set(arret);
-  const complets = noms.filter(n => motsUtiles(n).length && motsUtiles(n).every(m => q.has(m)))
-                       .sort((a, b) => motsUtiles(b).length - motsUtiles(a).length);
-  if (complets.length) return complets[0];
-  const score = n => motsUtiles(n).filter(m => q.has(m)).length;
-  const meilleur = [...noms].sort((a, b) => score(b) - score(a))[0];
-  return meilleur && score(meilleur) > 0 ? meilleur : null;
+  const score = n => {
+    const nw = motsUtiles(n);
+    const m = nw.filter(w => arret.some(q => proche(w, q))).length;
+    const qm = arret.filter(q => nw.some(w => proche(w, q))).length;
+    return { complet: nw.length > 0 && m === nw.length, m, qm, part: nw.length ? m / nw.length : 0, len: nw.length };
+  };
+  let best = null, bs = null;
+  for (const n of noms) {
+    const sc = score(n);
+    if (!sc.m) continue;
+    const mieux = !bs
+      || (sc.complet && !bs.complet)
+      || (sc.complet === bs.complet && (sc.qm > bs.qm
+          || (sc.qm === bs.qm && (sc.part > bs.part || (sc.part === bs.part && sc.len > bs.len)))));
+    if (mieux) { best = n; bs = sc; }
+  }
+  return best;
 }
 
 // Libellé d'une direction prévue : le sens temps réel qui lui ressemble le plus (sinon la direction elle-même)
