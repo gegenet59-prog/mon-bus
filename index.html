@@ -69,15 +69,35 @@ function analyser(question) {
     if (m === "C" && suivant === "O" && chiffre(apres)) { res.push("C" + chiffre(apres)); i += 2; continue; }
     if ((m === "LIANE" || m === "L") && chiffre(suivant)) { res.push("L" + chiffre(suivant)); i++; continue; }
     if (m === "C" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
-    if (/^CO\d+$/.test(m)) { res.push("C" + m.slice(2)); continue; }
+    if (/^CO\d+[AB]?$/.test(m)) { res.push("C" + m.slice(2)); continue; }
     res.push(m);
   }
   const lignes = [], arret = [];
   for (const m of res) {
-    if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}$/.test(m)) lignes.push(m);
+    if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push(m);
     else if (!VIDES.has(m)) arret.push(m);
   }
   return { lignes, arret };
+}
+
+// Citadine C1 : le flux affiche "Porte des Postes" dans les deux sens.
+// On retrouve le sens grâce au quai (code d'arrêt physique), relevé dans le flux temps réel.
+// Boucle A : Porte des Postes -> Cormontaigne -> ... -> CHU -> Porte des Postes
+// Boucle B : Porte des Postes -> CHU -> ... -> Cormontaigne -> Porte des Postes
+const BOUCLES = {
+  C1: {
+    A: "PDP004 LBM001 RLE001 ISL002 LFU002 COR002 LCB001 CHQ002 SAC002 NAT003 REP005 ARJ003 RTA001 RUW001 ARA003 PRR003 FBG004 RDL001 TIM003 GEY001 LCI001 ARB001 GID001 CAL002 LBE002 CAV002 TSS002 SIM002".split(" "),
+    B: "PDP012 SIM003 TSS001 CAV001 LBE001 CAL001 GID002 ARB002 LCI002 GEY002 TIM004 RDL002 FBG005 PRR002 ARA004 RUW002 RTA002 ARJ005 REP003 NAT004 SAC001 CHQ001 LCB003 COR001 LFU001 ISL001 RLE002 LBM002".split(" "),
+    sens: { A: "Cormontaigne › CHU › Porte des Postes", B: "CHU › Cormontaigne › Porte des Postes" }
+  }
+};
+function preciserBoucle(p) {
+  const b = BOUCLES[p.code_ligne];
+  if (!b) return p;
+  for (const cote of ["A", "B"]) {
+    if (b[cote].includes(p.code_arret_physique)) return { ...p, code_ligne: p.code_ligne + cote, sens_ligne: b.sens[cote] };
+  }
+  return p;
 }
 
 async function chercher(question) {
@@ -98,8 +118,12 @@ async function chercher(question) {
   try {
     const r = await fetch(`${WFS}?${params}`);
     const data = await r.json();
-    let passages = data.features.map(f => f.properties);
-    if (lignes.length) passages = passages.filter(p => lignes.includes(p.code_ligne.toUpperCase()));
+    let passages = data.features.map(f => preciserBoucle(f.properties));
+    // "C1" garde C1A et C1B ; "C1A" ne garde que C1A
+    if (lignes.length) passages = passages.filter(p => {
+      const code = p.code_ligne.toUpperCase();
+      return lignes.includes(code) || lignes.includes(code.replace(/[AB]$/, ""));
+    });
 
     // Choix de l'arrêt : le plus long nom dont TOUS les mots sont dans la question
     const motsQuestion = new Set(arret);
