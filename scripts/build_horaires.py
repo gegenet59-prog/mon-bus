@@ -64,7 +64,10 @@ def main():
         if l["date"] in jours and l["exception_type"] == "1":
             services[l["service_id"]].add(l["date"])
 
-    lignes = {l["route_id"]: l["route_short_name"] for l in lire(z, "routes.txt")}
+    routes = list(lire(z, "routes.txt"))
+    lignes = {l["route_id"]: l["route_short_name"] for l in routes}
+    # Type (0 tram, 1 métro, 3 bus) et couleurs officielles de chaque ligne, pour l'affichage
+    infos_lignes = {l["route_short_name"]: [int(l["route_type"] or 3), l["route_color"], l["route_text_color"]] for l in routes}
     trajets = {}
     for l in lire(z, "trips.txt"):
         if l["service_id"] in services:
@@ -126,7 +129,7 @@ def main():
             json.dump({"genere": genere, "passages": liste}, f, ensure_ascii=False, separators=(",", ":"))
     index = {nom: sorted(p) for nom, p in stations.items()}
     with open(os.path.join(sortie, "stations.json"), "w", encoding="utf-8") as f:
-        json.dump({"genere": genere, "stations": index, "quais": quais}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"genere": genere, "stations": index, "quais": quais, "lignes": infos_lignes}, f, ensure_ascii=False, separators=(",", ":"))
     # Position moyenne des quais de chaque arrêt
     arrets = [[pid, infos.get(pid, ("", ""))[0], infos.get(pid, ("", ""))[1],
                round(sum(p[0] for p in pts) / len(pts), 5), round(sum(p[1] for p in pts) / len(pts), 5)]

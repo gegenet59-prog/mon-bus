@@ -27,7 +27,8 @@
   .arret { background:#fff; border-radius:14px; padding:14px 16px; margin-top:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
   .arret h2 { margin:0 0 8px; font-size:16px; }
   .ligne { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #eee; }
-  .num { min-width:44px; text-align:center; font-weight:700; color:#fff; background:var(--texte); border-radius:8px; padding:4px 6px; }
+  .num { min-width:52px; text-align:center; font-weight:800; font-size:17px; color:#fff; background:var(--texte); border-radius:8px; padding:3px 6px; line-height:1.1; }
+  .num small { display:block; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.3px; opacity:.9; }
   .sens { flex:1; font-size:15px; }
   .min { font-weight:700; font-size:17px; white-space:nowrap; }
   .min small { display:block; font-weight:400; font-size:12px; color:var(--gris); text-align:right; }
@@ -96,19 +97,35 @@ function analyser(question) {
     if (m === "C" && suivant === "O" && chiffre(apres)) { res.push("CO" + chiffre(apres)); i += 2; continue; }
     if ((m === "LIANE" || m === "L") && chiffre(suivant)) { res.push("L" + chiffre(suivant)); i++; continue; }
     if (m === "C" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
-    // Paris : « RER A », « métro 4 », « tram 3a » -> ligne forcée (marquée #)
-    if (m === "RER" && /^[A-E]$/.test(suivant || "")) { res.push("#" + suivant); i++; continue; }
-    if ((m === "METRO" || m === "M") && chiffre(suivant)) { res.push("#" + chiffre(suivant)); i++; continue; }
-    if (m === "TRAM" && /^\d{1,2}[AB]?$/.test(suivant || "")) { res.push("#T" + suivant); i++; continue; }
+    // Mode précisé : « métro 1 », « bus 14 », « RER A », « tram 3a », « transilien H », « TER »…
+    // -> filtre "MODE:CODE" (CODE = * si aucun numéro : « le métro à Gare Lille Flandres »)
+    const code = x => x && (chiffre(x) || (/^[A-Z]{0,4}\d{1,3}[AB]?$/.test(x) ? x : null));
+    if (m === "RER" && /^[A-E]$/.test(suivant || "")) { res.push("#RER:" + suivant); i++; continue; }
+    if (m === "METRO" || m === "M") { if (chiffre(suivant)) { res.push("#METRO:" + chiffre(suivant)); i++; } else if (m === "METRO") res.push("#METRO:*"); else res.push(m); continue; }
+    if (m === "TRAM" || m === "TRAMWAY") { if (code(suivant)) { res.push("#TRAM:T" + code(suivant).replace(/^T/, "")); i++; } else res.push("#TRAM:*"); continue; }
+    if (m === "BUS" || m === "NOCTILIEN") { if (code(suivant)) { res.push("#BUS:" + code(suivant)); i++; } else res.push("#BUS:*"); continue; }
+    if (m === "TRANSILIEN" || m === "TRAIN") { if (/^[A-Z]$/.test(suivant || "") && suivant !== "A") { res.push("#TRAIN:" + suivant); i++; } else res.push("#TRAIN:*"); continue; }
+    if (m === "TER") { res.push("#TRAIN:*"); continue; }
     res.push(m);
   }
   const lignes = [], arret = [];
   for (const m of res) {
     if (m.startsWith("#")) lignes.push(m.slice(1));
-    else if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push(m);
+    else if (/^M\d{1,2}$/.test(m)) lignes.push("METRO:" + m.slice(1));
+    else if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push("*:" + m);
     else if (!VIDES.has(m)) arret.push(m);
   }
   return { lignes, arret };
+}
+
+// Une ligne affichée correspond-elle au filtre "MODE:CODE" ?
+// "C1" garde C1A et C1B ; à Lille le métro s'appelle M1/M2 dans les données
+function correspond(it, filtre) {
+  const [mode, code] = filtre.split(":");
+  if (mode !== "*" && it.mode !== mode) return false;
+  if (code === "*") return true;
+  const c = (it.ligne || "").toUpperCase();
+  return [c, c.replace(/[AB]$/, ""), c.replace(/^M(?=\d)/, "")].includes(code);
 }
 
 // Citadine C1 : le flux affiche "Porte des Postes" dans les deux sens.
@@ -133,11 +150,11 @@ function preciserBoucle(p) {
 
 // --- Horaires théoriques (fichiers régénérés chaque nuit par GitHub Actions) ---
 // INDEX : nom -> identifiants d'arrêts (un par commune) · QUAIS : identifiant -> codes de quais
-let INDEX = null, QUAIS = {};
+let INDEX = null, QUAIS = {}, LIGNES_LILLE = {};
 const CACHE = {};
 async function chargerIndex() {
   if (INDEX) return INDEX;
-  try { const d = await (await fetch("horaires/stations.json")).json(); INDEX = d.stations; QUAIS = d.quais || {}; }
+  try { const d = await (await fetch("horaires/stations.json")).json(); INDEX = d.stations; QUAIS = d.quais || {}; LIGNES_LILLE = d.lignes || {}; }
   catch { INDEX = {}; }
   return INDEX;
 }
@@ -238,7 +255,7 @@ async function chercher(question, opts = {}) {
   // Filtres : lignes demandées ("C1" garde C1A et C1B), puis direction (mots restants de la phrase)
   const maintenant = new Date();
   let liste = r.items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
-  if (lignes.length) liste = liste.filter(it => lignes.includes(it.ligne) || lignes.includes(it.ligne.replace(/[AB]$/, "")));
+  if (lignes.length) liste = liste.filter(it => lignes.some(f => correspond(it, f)));
   const restants = arret.filter(m => !normaliser(r.nom).split(" ").includes(m));
   const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
   if (avecSens.length) liste = avecSens;
@@ -246,6 +263,13 @@ async function chercher(question, opts = {}) {
 }
 
 // ===================== LILLE (Ilevia) =====================
+// Mode et couleurs d'une ligne Ilevia (type GTFS : 0 tram, 1 métro, 3 bus)
+function habillerLille(it) {
+  const [type, couleur, texte] = LIGNES_LILLE[it.ligne.replace(/^(C\d+)[AB]$/, "$1")] || [3];
+  const mode = type === 1 ? "METRO" : type === 0 ? "TRAM" : "BUS";
+  return { ...it, mode, nomMode: { METRO: "Métro", TRAM: "Tram", BUS: "Bus" }[mode],
+           code: mode === "METRO" ? it.ligne.replace(/^M/, "") : mode === "TRAM" ? "" : it.ligne, couleur, texte };
+}
 async function chercherLille(arret, force) {
   const index = await chargerIndex();
   const nom = force?.nom || meilleurNom(Object.keys(index), arret) || arret.join(" ");
@@ -271,6 +295,7 @@ async function chercherLille(arret, force) {
     const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
     items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
   }
+  for (let i = 0; i < items.length; i++) items[i] = habillerLille(items[i]);
   const titreArret = force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom;
   return { nom, titre: titreArret, items, tempsReelOk };
 }
@@ -289,13 +314,27 @@ async function infoLigne(id) {
   if (!LIGNES_IDFM[id]) {
     try {
       const l = (await prim(`/v2/navitia/lines/line:IDFM:${id}`)).lines[0];
-      LIGNES_IDFM[id] = { code: l.code, couleur: l.color, texte: l.text_color };
+      LIGNES_IDFM[id] = { code: l.code, couleur: l.color, texte: l.text_color, nomMode: l.commercial_mode?.name, nomLigne: l.name };
     } catch { LIGNES_IDFM[id] = { code: id }; }
   }
   return LIGNES_IDFM[id];
 }
 // Heure Navitia "20261030T220700" (heure de Paris)
 const dateNavitia = s => new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15));
+// Mode d'une ligne d'Île-de-France d'après son nom commercial (Métro, RER, Bus, Tramway, Transilien, TER…)
+function habillerParis(it, nomMode = "", nomLigne = "") {
+  const n = normaliser(nomMode);
+  // Bus de remplacement (travaux) : « Bus Remplacement RER D » -> badge « BUS RER » + D
+  const remplacement = normaliser(nomLigne).match(/REMPLACEMENT (RER|TRANSILIEN|TRAM|METRO)/);
+  if (remplacement) return { ...it, mode: "BUS", nomMode: "Bus " + { RER: "RER", TRANSILIEN: "Transilien", TRAM: "Tram", METRO: "Métro" }[remplacement[1]] };
+  const mode = n.includes("METRO") ? "METRO" : n === "RER" ? "RER" : n.includes("TRAM") ? "TRAM"
+             : /TRANSILIEN|TER|TRAIN/.test(n) ? "TRAIN" : "BUS";
+  const nom = { METRO: "Métro", RER: "RER", TRAM: "Tram", BUS: n.includes("NOCTILIEN") ? "Noctilien" : "Bus" }[mode]
+            || (n.includes("TRANSILIEN") ? "Transilien" : n.includes("TER") ? "TER" : "Train");
+  // Pas de doublon « TER TER » : le code est vide s'il répète le nom du mode
+  const code = normaliser(it.code || "") === normaliser(nom) ? "" : it.code;
+  return { ...it, mode, nomMode: nom, code };
+}
 const sansCommune = s => s.replace(/\s*\(.*?\)\s*/g, " ").trim(); // "La Défense (Puteaux)" -> "La Défense"
 
 async function chercherParis(arret, force) {
@@ -328,7 +367,7 @@ async function chargerZoneParis(zone, nom, num) {
   for (const d of dep.departures || []) {
     const id = (d.route?.line?.id || "").split(":").pop();
     const di = d.display_informations;
-    if (id) LIGNES_IDFM[id] ??= { code: di.code, couleur: di.color, texte: di.text_color };
+    if (id) LIGNES_IDFM[id] ??= { code: di.code, couleur: di.color, texte: di.text_color, nomMode: di.commercial_mode, nomLigne: d.route?.line?.name };
   }
   const visites = sm?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit || [];
   for (const v of visites) {
@@ -338,14 +377,15 @@ async function chargerZoneParis(zone, nom, num) {
     const dest = j.DestinationName?.[0]?.value || j.DirectionName?.[0]?.value || "";
     if (!t || !id) continue;
     const info = await infoLigne(id);
-    items.push({ ligne: (info.code || id).toUpperCase(), sens: normaliser(dest), h: new Date(t), prevu: false, couleur: info.couleur, texte: info.texte });
+    items.push(habillerParis({ ligne: (info.code || id).toUpperCase(), code: info.code || id, sens: normaliser(dest), h: new Date(t), prevu: false,
+                               couleur: info.couleur, texte: info.texte }, info.nomMode, info.nomLigne));
   }
   const libelle = libelleur(items);
   for (const d of dep.departures || []) {
     const di = d.display_informations;
     const code = (di.code || "").toUpperCase();
-    items.push({ ligne: code, sens: libelle(code, sansCommune(di.direction || "")), h: dateNavitia(d.stop_date_time.departure_date_time),
-                 prevu: true, couleur: di.color, texte: di.text_color });
+    items.push(habillerParis({ ligne: code, code: di.code || "", sens: libelle(code, sansCommune(di.direction || "")),
+                 h: dateNavitia(d.stop_date_time.departure_date_time), prevu: true, couleur: di.color, texte: di.text_color }, di.commercial_mode, d.route?.line?.name));
   }
   return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm, perturbationsParis: dep.disruptions || [] };
 }
@@ -360,7 +400,7 @@ function afficher(r, liste, question, opts) {
     + (r.tempsReelOk ? "" : " · temps réel indisponible, horaires prévus seulement");
 
   const groupes = {};
-  for (const it of liste) (groupes[it.ligne + "|" + it.sens] ??= []).push(it);
+  for (const it of liste) (groupes[it.mode + "|" + it.ligne + "|" + it.sens] ??= []).push(it);
   const lignesAff = [];
   for (const [cle, tous] of Object.entries(groupes)) {
     const reels = tous.filter(i => !i.prevu).sort((a, b) => a.h - b.h);
@@ -377,10 +417,10 @@ function afficher(r, liste, question, opts) {
 
   let html = `<div class="arret"><h2>${titre(arret)}</h2>`;
   for (const [cle, choix] of lignesAff) {
-    const [ligne, sens] = cle.split("|");
+    const sens = cle.split("|")[2];
     const [premier, ...suivants] = choix;
     const style = premier.couleur ? ` style="background:#${premier.couleur};color:#${premier.texte || "FFFFFF"}"` : "";
-    html += `<div class="ligne"><span class="num"${style}>${ligne}</span><span class="sens">→ ${titre(sens)}</span>
+    html += `<div class="ligne"><span class="num"${style}><small>${premier.nomMode || ""}</small>${premier.code ?? premier.ligne}</span><span class="sens">→ ${titre(sens)}</span>
              <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
   }
   const favori = lireListe("favoris").includes(question);
@@ -390,7 +430,7 @@ function afficher(r, liste, question, opts) {
   $("btnFavori").onclick = () => { basculerFavori(question); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
   if (opts.voix) parler(arret, lignesAff);
-  afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[0]));
+  afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[1]));
 }
 
 const hhmm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -451,8 +491,8 @@ function parler(arret, lignesAff) {
     return min < 60 ? `dans ${min} minute${min > 1 ? "s" : ""}` : `à ${heure}`;
   };
   const phrases = lignesAff.slice(0, 4).map(([cle, choix]) => {
-    const [ligne, sens] = cle.split("|");
-    let t = `Ligne ${ligne.split("").join(" ")} vers ${titre(sens).replace(/›/g, ",")} : ${dire(choix[0])}`;
+    const sens = cle.split("|")[2], p0 = choix[0];
+    let t = `${p0.nomMode || "Ligne"} ${(p0.code ?? p0.ligne).split("").join(" ")} vers ${titre(sens).replace(/›/g, ",")} : ${dire(choix[0])}`;
     if (choix[1]) t += `, puis ${dire(choix[1])}`;
     return t + ".";
   });
@@ -492,7 +532,7 @@ async function afficherPerturbations(r, lignes) {
   } catch { return; }
   if (!msgs.length || !$("trafic")) return;
   $("trafic").innerHTML = `<div class="arret trafic"><h2>⚠️ Info trafic</h2>` + msgs.map(m =>
-    `<details><summary><b>${m.lignes.join(", ")}</b> · ${echapper(m.texte.slice(0, 70))}${m.texte.length > 70 ? "…" : ""}</summary><p>${echapper(m.texte)}</p></details>`
+    `<details><summary><b>${m.lignes.map(l => l.replace(/^M(\d)$/, "Métro $1")).join(", ")}</b> · ${echapper(m.texte.slice(0, 70))}${m.texte.length > 70 ? "…" : ""}</summary><p>${echapper(m.texte)}</p></details>`
   ).join("") + `</div>`;
 }
 
