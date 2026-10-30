@@ -29,6 +29,8 @@
   .min { font-weight:700; font-size:17px; white-space:nowrap; }
   .min small { display:block; font-weight:400; font-size:12px; color:var(--gris); text-align:right; }
   #statut { margin-top:12px; color:var(--gris); }
+  .prevu { color:var(--gris); font-weight:600; }
+  .prevu i { font-weight:400; font-size:12px; }
 </style>
 </head>
 <body>
@@ -39,7 +41,7 @@
     <button>OK</button>
   </form>
   <button id="micro">🎤 Reste appuyé pour parler</button>
-  <p class="aide">Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche. Bus et tram seulement (pas le métro).</p>
+  <p class="aide">Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche. Métro : horaires prévus seulement.</p>
   <div id="recents"></div>
   <div id="statut"></div>
   <div id="resultats"></div>
@@ -100,6 +102,35 @@ function preciserBoucle(p) {
   return p;
 }
 
+// --- Horaires théoriques (fichiers régénérés chaque nuit par GitHub Actions) ---
+let INDEX = null;
+const CACHE = {};
+async function chargerIndex() {
+  if (INDEX) return INDEX;
+  try { INDEX = (await (await fetch("horaires/stations.json")).json()).stations; }
+  catch { INDEX = {}; }
+  return INDEX;
+}
+async function chargerHoraires(prefixe) {
+  if (!CACHE[prefixe]) {
+    try { const r = await fetch(`horaires/${prefixe}.json`); CACHE[prefixe] = r.ok ? (await r.json()).passages : []; }
+    catch { CACHE[prefixe] = []; }
+  }
+  return CACHE[prefixe];
+}
+
+// Temps réel : passages Ilevia pour un nom d'arrêt (le flux ne donne que 1 ou 2 bus par ligne)
+async function chargerTempsReel(nomArret) {
+  const mots = nomArret.split(" ").filter(m => m.length >= 2).map(m => m.replace(/'/g, ""));
+  const params = new URLSearchParams({
+    service: "WFS", version: "2.0.0", request: "GetFeature",
+    typeNames: "dsp_ilevia:prochains_passages", outputFormat: "application/json",
+    CQL_FILTER: mots.map(m => `nom_station ILIKE '%${m}%'`).join(" AND ")
+  });
+  const data = await (await fetch(`${WFS}?${params}`)).json();
+  return data.features.map(f => f.properties).filter(p => normaliser(p.nom_station) === nomArret);
+}
+
 async function chercher(question) {
   question = question.trim();
   if (!question) return;
@@ -107,80 +138,105 @@ async function chercher(question) {
   if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. Exemple : 14 République Beaux-Arts"; return; }
   $("statut").textContent = "Recherche…";
   $("resultats").innerHTML = "";
-  // Côté serveur : tous les passages dont l'arrêt contient l'un des mots de la question
-  const mots = [...new Set(arret.filter(m => m.length >= 3).map(m => m.replace(/'/g, "")))];
-  if (!mots.length) mots.push(arret[0]);
-  const params = new URLSearchParams({
-    service: "WFS", version: "2.0.0", request: "GetFeature",
-    typeNames: "dsp_ilevia:prochains_passages", outputFormat: "application/json",
-    CQL_FILTER: mots.map(m => `nom_station ILIKE '%${m}%'`).join(" OR ")
-  });
-  try {
-    const r = await fetch(`${WFS}?${params}`);
-    const data = await r.json();
-    let passages = data.features.map(f => preciserBoucle(f.properties));
-    // "C1" garde C1A et C1B ; "C1A" ne garde que C1A
-    if (lignes.length) passages = passages.filter(p => {
-      const code = p.code_ligne.toUpperCase();
-      return lignes.includes(code) || lignes.includes(code.replace(/[AB]$/, ""));
-    });
 
-    // Choix de l'arrêt : le plus long nom dont TOUS les mots sont dans la question
-    const motsQuestion = new Set(arret);
-    const noms = [...new Set(passages.map(p => normaliser(p.nom_station)))];
-    const complets = noms.filter(n => n.split(" ").every(m => motsQuestion.has(m)))
-                         .sort((a, b) => b.length - a.length);
-    let arretChoisi = complets[0];
-    if (!arretChoisi) {
-      // Sinon : celui qui partage le plus de mots avec la question
-      const score = n => n.split(" ").filter(m => motsQuestion.has(m)).length;
-      arretChoisi = noms.sort((a, b) => score(b) - score(a))[0];
-    }
-    passages = passages.filter(p => normaliser(p.nom_station) === arretChoisi);
-
-    // Direction : les mots restants (ex. MARAIS, CIMETIERE) filtrent les sens, si ça correspond
-    const restants = arret.filter(m => !(arretChoisi || "").split(" ").includes(m));
-    const avecSens = passages.filter(p => normaliser(p.sens_ligne).split(" ").some(m => restants.includes(m)));
-    if (avecSens.length) passages = avecSens;
-
-    afficher(passages, question);
-  } catch (e) {
-    $("statut").textContent = "Impossible de joindre Ilevia. Réessaie dans un instant.";
+  // 1. Choix de l'arrêt dans la liste officielle : le plus long nom dont TOUS les mots sont dans la question
+  const index = await chargerIndex();
+  const motsQuestion = new Set(arret);
+  const noms = Object.keys(index);
+  let arretChoisi = noms.filter(n => n.split(" ").every(m => motsQuestion.has(m)))
+                        .sort((a, b) => b.length - a.length)[0];
+  if (!arretChoisi) {
+    const score = n => n.split(" ").filter(m => motsQuestion.has(m)).length;
+    const meilleur = noms.sort((a, b) => score(b) - score(a))[0];
+    arretChoisi = meilleur && score(meilleur) > 0 ? meilleur : arret.join(" ");
   }
+
+  // 2. Temps réel + horaires prévus de cet arrêt
+  let tempsReel = [], tempsReelOk = true;
+  try { tempsReel = await chargerTempsReel(arretChoisi); } catch { tempsReelOk = false; }
+  const prevus = (await Promise.all((index[arretChoisi] || []).map(chargerHoraires))).flat();
+
+  const maintenant = new Date();
+  const items = [];
+  for (const p of tempsReel) {
+    const q = preciserBoucle(p);
+    // L'heure du flux finit par "Z" mais c'est déjà l'heure locale : on retire le Z
+    items.push({ ligne: q.code_ligne, sens: normaliser(q.sens_ligne), h: new Date(p.heure_estimee_depart.replace("Z", "")), prevu: false });
+  }
+  // Libellé du sens pour un horaire prévu : celui du temps réel qui lui ressemble le plus
+  const sensConnus = {};
+  for (const it of items) (sensConnus[it.ligne] ??= new Set()).add(it.sens);
+  const libelle = (ligne, direction) => {
+    const mots = normaliser(direction).split(" ");
+    let best = null, bestScore = 0, egalite = false;
+    for (const s of sensConnus[ligne] || []) {
+      // Part des mots du sens temps réel retrouvés dans la direction prévue (CHATEAU -> 1/1 bat WAMBRECHIES AGRIPPIN -> 1/2)
+      const sc = s.split(" ").filter(m => mots.includes(m)).length / s.split(" ").length;
+      if (sc > bestScore) { best = s; bestScore = sc; egalite = false; }
+      else if (sc === bestScore && sc > 0) egalite = true;
+    }
+    return best && !egalite ? best : normaliser(direction);
+  };
+  const limite = maintenant.getTime() + 36 * 3600000;
+  for (const [d, hm, ligne, direction, quai] of prevus) {
+    const [H, M] = hm.split(":").map(Number);
+    const h = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), H, M); // 25:10 = lendemain 01:10
+    if (h < maintenant || h > limite) continue;
+    const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
+    items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
+  }
+
+  // 3. Filtres : lignes demandées ("C1" garde C1A et C1B), puis direction (mots restants de la phrase)
+  let liste = items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
+  if (lignes.length) liste = liste.filter(it => lignes.includes(it.ligne) || lignes.includes(it.ligne.replace(/[AB]$/, "")));
+  const restants = arret.filter(m => !arretChoisi.split(" ").includes(m));
+  const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
+  if (avecSens.length) liste = avecSens;
+
+  afficher(arretChoisi, liste, question, tempsReelOk);
 }
 
-function afficher(passages, question) {
+// Par ligne + direction : les bus en temps réel, complétés par les horaires prévus
+// (seulement APRÈS le dernier bus en temps réel, pour ne pas compter deux fois le même bus)
+function afficher(arret, liste, question, tempsReelOk) {
   const maintenant = new Date();
-  // L'heure du flux finit par "Z" mais c'est déjà l'heure locale : on retire le Z
-  const items = passages.map(p => {
-    const h = new Date(p.heure_estimee_depart.replace("Z", ""));
-    return { ...p, h, min: Math.floor((h - maintenant) / 60000) };
-  }).filter(p => p.min >= 0).sort((a, b) => a.h - b.h);
-
-  if (!items.length) { $("statut").textContent = "Aucun passage trouvé. Vérifie le nom de l'arrêt ou la ligne."; return; }
+  if (!liste.length) { $("statut").textContent = "Aucun passage trouvé. Vérifie le nom de l'arrêt ou la ligne."; return; }
   memoriser(question);
-  $("statut").textContent = `Mis à jour à ${maintenant.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  $("statut").textContent = `Mis à jour à ${hhmm(maintenant)}` + (tempsReelOk ? "" : " · temps réel indisponible, horaires prévus seulement");
 
-  // Regroupe par arrêt, puis par ligne + direction (3 prochains max)
-  const parArret = {};
-  for (const p of items) {
-    const g = (parArret[p.nom_station] ??= {});
-    (g[p.code_ligne + "|" + p.sens_ligne] ??= []).push(p);
-  }
-  let html = "";
-  for (const [arret, groupes] of Object.entries(parArret)) {
-    html += `<div class="arret"><h2>${titre(arret)}</h2>`;
-    const tri = Object.entries(groupes).sort((a, b) => a[1][0].h - b[1][0].h);
-    for (const [cle, liste] of tri) {
-      const [ligne, sens] = cle.split("|");
-      const suivants = liste.slice(1, 3).map(p => p.min + " min").join(", ");
-      const premier = liste[0].min === 0 ? "à l'approche" : liste[0].min + " min";
-      html += `<div class="ligne"><span class="num">${ligne}</span><span class="sens">→ ${titre(sens)}</span>
-               <span class="min">${premier}${suivants ? `<small>puis ${suivants}</small>` : ""}</span></div>`;
+  const groupes = {};
+  for (const it of liste) (groupes[it.ligne + "|" + it.sens] ??= []).push(it);
+  const lignesAff = [];
+  for (const [cle, tous] of Object.entries(groupes)) {
+    const reels = tous.filter(i => !i.prevu).sort((a, b) => a.h - b.h);
+    const prevus = tous.filter(i => i.prevu).sort((a, b) => a.h - b.h);
+    const dernierReel = reels.length ? reels[reels.length - 1].h.getTime() + 2 * 60000 : 0;
+    const choix = reels.slice(0, 3);
+    for (const p of prevus) {
+      if (choix.length >= 2) break;
+      if (p.h.getTime() > dernierReel) choix.push(p);
     }
-    html += "</div>";
+    if (choix.length) lignesAff.push([cle, choix]);
   }
+  lignesAff.sort((a, b) => a[1][0].h - b[1][0].h);
+
+  let html = `<div class="arret"><h2>${titre(arret)}</h2>`;
+  for (const [cle, choix] of lignesAff) {
+    const [ligne, sens] = cle.split("|");
+    const [premier, ...suivants] = choix;
+    html += `<div class="ligne"><span class="num">${ligne}</span><span class="sens">→ ${titre(sens)}</span>
+             <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
+  }
+  html += `</div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique Ilevia</p>`;
   $("resultats").innerHTML = html;
+}
+
+const hhmm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+function quand(p, maintenant, petit) {
+  const min = Math.floor((p.h - maintenant) / 60000);
+  const demain = p.h.toDateString() !== maintenant.toDateString();
+  let txt = demain ? `demain ${hhmm(p.h)}` : min <= 0 ? "à l'approche" : min < 60 ? `${min} min` : hhmm(p.h);
+  return p.prevu ? `<span class="prevu">${txt} <i>prévu</i></span>` : `${txt}${petit ? "" : " 📡"}`;
 }
 
 const titre = s => s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());

@@ -1,0 +1,37 @@
+# Régénère chaque nuit les horaires théoriques Ilevia et publie le site sur GitHub Pages
+name: Horaires et publication
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "15 1 * * *"   # chaque nuit vers 2h15-3h15 (heure de Paris)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fabrique les horaires du jour
+        run: python3 scripts/build_horaires.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploiement
+        uses: actions/deploy-pages@v4
