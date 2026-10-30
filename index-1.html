@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#d6001c">
+<title>Mon bus</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23d6001c'/%3E%3Ctext x='50' y='70' font-size='60' text-anchor='middle'%3E🚌%3C/text%3E%3C/svg%3E">
+<style>
+  :root { --rouge:#d6001c; --fond:#f5f5f7; --texte:#1c1c1e; --gris:#6e6e73; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Roboto,sans-serif; background:var(--fond); color:var(--texte); }
+  header { background:var(--rouge); color:#fff; padding:18px 20px; font-size:20px; font-weight:700; }
+  main { padding:16px; max-width:520px; margin:0 auto; }
+  form { display:flex; gap:8px; }
+  input { flex:1; font-size:17px; padding:14px; border:1px solid #ccc; border-radius:12px; }
+  button { font-size:17px; border:0; border-radius:12px; padding:0 18px; background:var(--texte); color:#fff; }
+  #micro { width:100%; margin-top:14px; padding:22px; font-size:19px; font-weight:600; background:var(--rouge);
+           user-select:none; -webkit-user-select:none; touch-action:none; }
+  #micro.ecoute { background:#1a7f37; }
+  .aide { color:var(--gris); font-size:14px; margin:10px 2px; }
+  #recents { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  #recents button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
+  .arret { background:#fff; border-radius:14px; padding:14px 16px; margin-top:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .arret h2 { margin:0 0 8px; font-size:16px; }
+  .ligne { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #eee; }
+  .num { min-width:44px; text-align:center; font-weight:700; color:#fff; background:var(--texte); border-radius:8px; padding:4px 6px; }
+  .sens { flex:1; font-size:15px; }
+  .min { font-weight:700; font-size:17px; white-space:nowrap; }
+  .min small { display:block; font-weight:400; font-size:12px; color:var(--gris); text-align:right; }
+  #statut { margin-top:12px; color:var(--gris); }
+</style>
+</head>
+<body>
+<header>🚌 Mon bus Ilevia</header>
+<main>
+  <form id="formulaire">
+    <input id="question" placeholder="ex : 14 CO1 République Beaux-Arts" autocomplete="off">
+    <button>OK</button>
+  </form>
+  <button id="micro">🎤 Reste appuyé pour parler</button>
+  <p class="aide">Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche. Bus et tram seulement (pas le métro).</p>
+  <div id="recents"></div>
+  <div id="statut"></div>
+  <div id="resultats"></div>
+</main>
+<script>
+const WFS = "https://data.lillemetropole.fr/geoserver/wfs";
+const $ = id => document.getElementById(id);
+
+// Mots à ignorer dans la question
+const VIDES = new Set("LE LA LES ET A AU AUX DE DU DES D L UN UNE BUS TRAM LIGNE LIGNES DANS COMBIEN TEMPS PASSE PASSENT QUAND PROCHAIN PROCHAINS PROCHAINE ARRET ARRIVE ARRIVENT EST CE QUE QUI DIS MOI VERS DIRECTION SVP STP".split(" "));
+const CHIFFRES = { UN:"1", DEUX:"2", TROIS:"3", QUATRE:"4", CINQ:"5", SIX:"6", SEPT:"7", HUIT:"8", NEUF:"9", DIX:"10" };
+
+function normaliser(t) {
+  return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase()
+          .replace(/[-'’.,?!]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Sépare la question en lignes (14, CO1, L1...) et en nom d'arrêt
+function analyser(question) {
+  let mots = normaliser(question).split(" ").filter(Boolean);
+  // Recolle "CO 1", "C O 1", "LIANE 1", "L 1" -> C1 / L1
+  const res = [];
+  for (let i = 0; i < mots.length; i++) {
+    let m = mots[i], suivant = mots[i + 1], apres = mots[i + 2];
+    const chiffre = s => s && (/^\d+$/.test(s) ? s : CHIFFRES[s]);
+    if ((m === "CO" || m === "CITADINE") && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
+    if (m === "C" && suivant === "O" && chiffre(apres)) { res.push("C" + chiffre(apres)); i += 2; continue; }
+    if ((m === "LIANE" || m === "L") && chiffre(suivant)) { res.push("L" + chiffre(suivant)); i++; continue; }
+    if (m === "C" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
+    if (/^CO\d+$/.test(m)) { res.push("C" + m.slice(2)); continue; }
+    res.push(m);
+  }
+  const lignes = [], arret = [];
+  for (const m of res) {
+    if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}$/.test(m)) lignes.push(m);
+    else if (!VIDES.has(m)) arret.push(m);
+  }
+  return { lignes, arret };
+}
+
+async function chercher(question) {
+  question = question.trim();
+  if (!question) return;
+  const { lignes, arret } = analyser(question);
+  if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. Exemple : 14 République Beaux-Arts"; return; }
+  $("statut").textContent = "Recherche…";
+  $("resultats").innerHTML = "";
+  // Filtre côté serveur sur le mot le plus long de l'arrêt
+  const motCle = [...arret].sort((a, b) => b.length - a.length)[0].replace(/'/g, "");
+  const params = new URLSearchParams({
+    service: "WFS", version: "2.0.0", request: "GetFeature",
+    typeNames: "dsp_ilevia:prochains_passages", outputFormat: "application/json",
+    CQL_FILTER: `nom_station ILIKE '%${motCle}%'`
+  });
+  try {
+    const r = await fetch(`${WFS}?${params}`);
+    const data = await r.json();
+    const voulu = arret.join(" ");
+    let passages = data.features.map(f => f.properties);
+    // Arrêt exact si possible, sinon arrêts contenant tous les mots
+    const exacts = passages.filter(p => normaliser(p.nom_station) === voulu);
+    passages = exacts.length ? exacts
+      : passages.filter(p => arret.every(m => normaliser(p.nom_station).split(" ").includes(m)));
+    if (lignes.length) passages = passages.filter(p => lignes.includes(p.code_ligne.toUpperCase()));
+    afficher(passages, question);
+  } catch (e) {
+    $("statut").textContent = "Impossible de joindre Ilevia. Réessaie dans un instant.";
+  }
+}
+
+function afficher(passages, question) {
+  const maintenant = new Date();
+  // L'heure du flux finit par "Z" mais c'est déjà l'heure locale : on retire le Z
+  const items = passages.map(p => {
+    const h = new Date(p.heure_estimee_depart.replace("Z", ""));
+    return { ...p, h, min: Math.floor((h - maintenant) / 60000) };
+  }).filter(p => p.min >= 0).sort((a, b) => a.h - b.h);
+
+  if (!items.length) { $("statut").textContent = "Aucun passage trouvé. Vérifie le nom de l'arrêt ou la ligne."; return; }
+  memoriser(question);
+  $("statut").textContent = `Mis à jour à ${maintenant.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+
+  // Regroupe par arrêt, puis par ligne + direction (3 prochains max)
+  const parArret = {};
+  for (const p of items) {
+    const g = (parArret[p.nom_station] ??= {});
+    (g[p.code_ligne + "|" + p.sens_ligne] ??= []).push(p);
+  }
+  let html = "";
+  for (const [arret, groupes] of Object.entries(parArret)) {
+    html += `<div class="arret"><h2>${titre(arret)}</h2>`;
+    const tri = Object.entries(groupes).sort((a, b) => a[1][0].h - b[1][0].h);
+    for (const [cle, liste] of tri) {
+      const [ligne, sens] = cle.split("|");
+      const suivants = liste.slice(1, 3).map(p => p.min + " min").join(", ");
+      const premier = liste[0].min === 0 ? "à l'approche" : liste[0].min + " min";
+      html += `<div class="ligne"><span class="num">${ligne}</span><span class="sens">→ ${titre(sens)}</span>
+               <span class="min">${premier}${suivants ? `<small>puis ${suivants}</small>` : ""}</span></div>`;
+    }
+    html += "</div>";
+  }
+  $("resultats").innerHTML = html;
+}
+
+const titre = s => s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+
+// Questions récentes (gardées sur ce téléphone)
+function lireRecents() { try { return JSON.parse(localStorage.getItem("recents") || "[]"); } catch { return []; } }
+function memoriser(q) {
+  try {
+    const l = [q, ...lireRecents().filter(x => normaliser(x) !== normaliser(q))].slice(0, 5);
+    localStorage.setItem("recents", JSON.stringify(l));
+  } catch {}
+  montrerRecents();
+}
+function montrerRecents() {
+  $("recents").innerHTML = "";
+  for (const q of lireRecents()) {
+    const b = document.createElement("button");
+    b.textContent = q;
+    b.onclick = () => { $("question").value = q; chercher(q); };
+    $("recents").appendChild(b);
+  }
+}
+
+$("formulaire").onsubmit = e => { e.preventDefault(); $("question").blur(); chercher($("question").value); };
+
+// Micro : appui long = écoute, on relâche = on cherche
+const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!Reco) {
+  $("micro").textContent = "🎤 Micro non disponible dans ce navigateur";
+  $("micro").disabled = true;
+} else {
+  const reco = new Reco();
+  reco.lang = "fr-FR";
+  reco.interimResults = true;
+  let texte = "", enCours = false;
+  reco.onresult = e => {
+    texte = Array.from(e.results).map(r => r[0].transcript).join(" ");
+    $("question").value = texte;
+  };
+  reco.onend = () => {
+    enCours = false;
+    $("micro").classList.remove("ecoute");
+    $("micro").textContent = "🎤 Reste appuyé pour parler";
+    if (texte) chercher(texte);
+  };
+  reco.onerror = e => { $("statut").textContent = e.error === "not-allowed" ? "Autorise le micro pour cette page." : "Je n'ai rien entendu, réessaie."; };
+  const debut = e => {
+    e.preventDefault();
+    if (enCours) return;
+    texte = ""; enCours = true;
+    $("micro").classList.add("ecoute");
+    $("micro").textContent = "🟢 Je t'écoute… relâche pour chercher";
+    try { reco.start(); } catch {}
+  };
+  const fin = e => { e.preventDefault(); if (enCours) reco.stop(); };
+  $("micro").addEventListener("pointerdown", debut);
+  $("micro").addEventListener("pointerup", fin);
+  $("micro").addEventListener("pointercancel", fin);
+  $("micro").addEventListener("contextmenu", e => e.preventDefault());
+}
+
+montrerRecents();
+</script>
+</body>
+</html>
