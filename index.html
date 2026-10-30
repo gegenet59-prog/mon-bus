@@ -59,7 +59,7 @@
   <button id="gps">📍 Autour de moi</button>
   <div id="proches"></div>
   <form id="formulaire">
-    <input id="question" placeholder="ex : 14 CO1 République Beaux-Arts" autocomplete="off">
+    <input id="question" placeholder="ex : 14 C1 République Beaux-Arts" autocomplete="off">
     <button>OK</button>
   </form>
   <button id="micro">🎤 Reste appuyé pour parler</button>
@@ -90,11 +90,12 @@ function analyser(question) {
   for (let i = 0; i < mots.length; i++) {
     let m = mots[i], suivant = mots[i + 1], apres = mots[i + 2];
     const chiffre = s => s && (/^\d+$/.test(s) ? s : CHIFFRES[s]);
-    if ((m === "CO" || m === "CITADINE") && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
-    if (m === "C" && suivant === "O" && chiffre(apres)) { res.push("C" + chiffre(apres)); i += 2; continue; }
+    // Lille : CO = Corolle (CO1, CO2…), C = Citadine (C1, C1A, C1B…)
+    if ((m === "CO" || m === "COROLLE") && chiffre(suivant)) { res.push("CO" + chiffre(suivant)); i++; continue; }
+    if (m === "CITADINE" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
+    if (m === "C" && suivant === "O" && chiffre(apres)) { res.push("CO" + chiffre(apres)); i += 2; continue; }
     if ((m === "LIANE" || m === "L") && chiffre(suivant)) { res.push("L" + chiffre(suivant)); i++; continue; }
     if (m === "C" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
-    if (/^CO\d+[AB]?$/.test(m)) { res.push("C" + m.slice(2)); continue; }
     // Paris : « RER A », « métro 4 », « tram 3a » -> ligne forcée (marquée #)
     if (m === "RER" && /^[A-E]$/.test(suivant || "")) { res.push("#" + suivant); i++; continue; }
     if ((m === "METRO" || m === "M") && chiffre(suivant)) { res.push("#" + chiffre(suivant)); i++; continue; }
@@ -173,10 +174,10 @@ async function chargerTempsReel(nomArret, quais) {
 let VILLE = "LILLE";
 try { VILLE = localStorage.getItem("ville") || "LILLE"; } catch {}
 const AIDES = {
-  LILLE: "Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche.",
+  LILLE: "Dis les lignes puis l'arrêt : « le 14 et la C1 à République Beaux-Arts ». Sans ligne, tout s'affiche.",
   PARIS: "Dis les lignes puis l'arrêt : « métro 4 et RER A à Châtelet ». Sans ligne, tout s'affiche."
 };
-const EXEMPLES = { LILLE: "ex : 14 CO1 République Beaux-Arts", PARIS: "ex : métro 4 RER A Châtelet" };
+const EXEMPLES = { LILLE: "ex : 14 C1 République Beaux-Arts", PARIS: "ex : métro 4 RER A Châtelet" };
 function choisirVille(v) {
   VILLE = v;
   try { localStorage.setItem("ville", v); } catch {}
