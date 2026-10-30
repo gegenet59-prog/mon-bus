@@ -39,8 +39,16 @@
   .sources { margin-top:28px; font-size:12px; text-align:center; }
   .sources a { color:var(--gris); }
   .supprime { color:#b91c1c; text-decoration:line-through; }
-  #villes { display:flex; gap:8px; margin-bottom:12px; }
-  #villes button { flex:1; padding:12px; font-weight:700; background:#fff; color:var(--texte); border:2px solid #ddd; }
+  #villes { display:flex; gap:8px; margin:0 -16px 12px; padding:2px 16px 6px; overflow-x:auto; scroll-snap-type:x proximity;
+            -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  #villes::-webkit-scrollbar { display:none; }
+  #villes button { flex:0 0 auto; min-width:104px; padding:12px 16px; font-weight:700; background:#fff; color:var(--texte);
+                   border:2px solid #ddd; scroll-snap-align:start; }
+  #villes button:disabled { color:#aaa; border-style:dashed; }
+  #villes button small { display:block; font-size:10px; font-weight:500; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--texte); color:#fff;
+           padding:10px 16px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9; }
+  #toast.visible { opacity:1; }
   #gps { width:100%; padding:13px; margin-bottom:12px; background:#fff; color:var(--texte); border:2px solid var(--texte); font-weight:700; }
   #proches { display:flex; flex-wrap:wrap; gap:8px; margin:-4px 0 12px; }
   #proches button { background:#eef6ff; color:var(--texte); border:1px solid #bcd7f5; padding:8px 12px; font-size:14px; }
@@ -60,7 +68,8 @@
 <body>
 <header>🚌 Mon bus</header>
 <main>
-  <div id="villes"><button data-ville="LILLE">LILLE</button><button data-ville="PARIS">PARIS</button></div>
+  <div id="villes"></div>
+  <div id="toast"></div>
   <button id="gps">📍 Autour de moi</button>
   <div id="proches"></div>
   <form id="formulaire">
@@ -196,6 +205,48 @@ async function chargerTempsReel(nomArret, quais) {
 }
 
 // ===================== Choix de la ville =====================
+// Villes : « dispo » = données branchées. Les autres s'affichent « bientôt » dans la barre.
+// Pour en ajouter une : brancher ses données puis passer dispo à true.
+const VILLES = [
+  { id: "LILLE", nom: "Lille", centre: [50.63, 3.06], dispo: true },
+  { id: "PARIS", nom: "Paris", centre: [48.86, 2.35], dispo: true },
+  { id: "LYON", nom: "Lyon", centre: [45.76, 4.84] },
+  { id: "MARSEILLE", nom: "Marseille", centre: [43.30, 5.37] },
+  { id: "TOULOUSE", nom: "Toulouse", centre: [43.60, 1.44] },
+  { id: "BORDEAUX", nom: "Bordeaux", centre: [44.84, -0.58] },
+  { id: "NANTES", nom: "Nantes", centre: [47.22, -1.55] },
+  { id: "STRASBOURG", nom: "Strasbourg", centre: [48.58, 7.75] },
+  { id: "MONTPELLIER", nom: "Montpellier", centre: [43.61, 3.88] },
+  { id: "RENNES", nom: "Rennes", centre: [48.11, -1.68] },
+  { id: "NICE", nom: "Nice", centre: [43.70, 7.27] },
+  { id: "GRENOBLE", nom: "Grenoble", centre: [45.19, 5.72] },
+  { id: "SAINT-ETIENNE", nom: "Saint-Étienne", centre: [45.44, 4.39] },
+  { id: "BREST", nom: "Brest", centre: [48.39, -4.49] },
+  { id: "AMIENS", nom: "Amiens", centre: [49.89, 2.30] }
+];
+let VILLE_GPS = null;
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("visible"); setTimeout(() => e.classList.remove("visible"), 2500); }
+// Barre coulissante : ville détectée par GPS en premier, puis ta ville choisie, puis les autres dispo, puis « bientôt »
+function construireBarre() {
+  const rang = v => (v.id === VILLE_GPS ? 0 : v.id === VILLE ? 1 : v.dispo ? 2 : 3);
+  const liste = [...VILLES].sort((a, b) => rang(a) - rang(b));
+  $("villes").innerHTML = "";
+  for (const v of liste) {
+    const b = document.createElement("button");
+    b.dataset.ville = v.id;
+    b.innerHTML = v.nom.toUpperCase() + (v.id === VILLE_GPS ? "<small>📍 tu es ici</small>" : v.dispo ? "" : "<small>bientôt</small>");
+    b.disabled = !v.dispo;
+    b.classList.toggle("actif", v.id === VILLE);
+    b.onclick = () => choisirVille(v.id);
+    $("villes").appendChild(b);
+  }
+  $("villes").scrollLeft = 0;
+}
+// Ville disponible la plus proche d'une position (à moins de 60 km), sinon null
+function villeProche(la, lo) {
+  const d = VILLES.filter(v => v.dispo).map(v => ({ v, km: distance(la, lo, ...v.centre) / 1000 })).sort((a, b) => a.km - b.km)[0];
+  return d && d.km < 60 ? d.v.id : null;
+}
 let VILLE = "LILLE";
 try { VILLE = localStorage.getItem("ville") || "LILLE"; } catch {}
 const AIDES = {
@@ -206,14 +257,14 @@ const EXEMPLES = { LILLE: "ex : 14 C1 République Beaux-Arts", PARIS: "ex : mét
 function choisirVille(v) {
   VILLE = v;
   try { localStorage.setItem("ville", v); } catch {}
-  document.querySelectorAll("#villes button").forEach(b => b.classList.toggle("actif", b.dataset.ville === v));
+  construireBarre();
   $("aideVille").textContent = AIDES[v];
   $("question").placeholder = EXEMPLES[v];
   $("resultats").innerHTML = ""; $("statut").textContent = ""; $("proches").innerHTML = "";
   DERNIERE = null;
   montrerRecents();
 }
-document.querySelectorAll("#villes button").forEach(b => b.onclick = () => choisirVille(b.dataset.ville));
+
 $("gps").onclick = () => autourDeMoi();
 
 // Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
@@ -700,6 +751,9 @@ async function autourDeMoi() {
   $("statut").textContent = "📍 Je cherche où tu es…"; $("resultats").innerHTML = ""; $("proches").innerHTML = "";
   navigator.geolocation.getCurrentPosition(async pos => {
     const { latitude: la, longitude: lo } = pos.coords;
+    // Tu es dans une autre ville que celle choisie ? On bascule automatiquement
+    const ici = villeProche(la, lo);
+    if (ici) { VILLE_GPS = ici; if (ici !== VILLE) { choisirVille(ici); toast(`📍 Ville détectée : ${VILLES.find(v => v.id === ici).nom}`); } else construireBarre(); }
     let proches = [];
     try {
       if (VILLE === "PARIS") {
@@ -767,7 +821,21 @@ if (!Reco) {
   $("micro").addEventListener("contextmenu", e => e.preventDefault());
 }
 
+if (!VILLES.some(v => v.id === VILLE && v.dispo)) VILLE = "LILLE";
 choisirVille(VILLE);
+(async () => {
+  try {
+    if (!navigator.permissions || !navigator.geolocation) return;
+    if ((await navigator.permissions.query({ name: "geolocation" })).state !== "granted") return;
+    navigator.geolocation.getCurrentPosition(pos => {
+      const ici = villeProche(pos.coords.latitude, pos.coords.longitude);
+      if (!ici) return;
+      VILLE_GPS = ici;
+      if (ici !== VILLE) { choisirVille(ici); toast(`📍 Ville détectée : ${VILLES.find(v => v.id === ici).nom}`); }
+      else construireBarre();
+    }, () => {}, { maximumAge: 300000, timeout: 10000 });
+  } catch {}
+})();
 </script>
 </body>
 </html>
