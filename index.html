@@ -36,6 +36,8 @@
   .prevu { color:var(--gris); font-weight:600; }
   .prevu i { font-weight:400; font-size:12px; }
   .retard { color:#c2410c; font-size:13px; }
+  .sources { margin-top:28px; font-size:12px; text-align:center; }
+  .sources a { color:var(--gris); }
   .supprime { color:#b91c1c; text-decoration:line-through; }
   #villes { display:flex; gap:8px; margin-bottom:12px; }
   #villes button { flex:1; padding:12px; font-weight:700; background:#fff; color:var(--texte); border:2px solid #ddd; }
@@ -71,6 +73,10 @@
   <div id="recents"></div>
   <div id="statut"></div>
   <div id="resultats"></div>
+  <p class="aide sources">Données : <a href="https://data.lillemetropole.fr">Ilevia / Métropole Européenne de Lille</a> ·
+    <a href="https://transport.data.gouv.fr/datasets/horaires-sncf">SNCF Voyageurs</a> (ODbL) ·
+    <a href="https://prim.iledefrance-mobilites.fr">Île-de-France Mobilités – PRIM</a>.
+    Horaires mis à jour chaque nuit, temps réel en direct.</p>
 </main>
 <script>
 const WFS = "https://data.lillemetropole.fr/geoserver/wfs";
