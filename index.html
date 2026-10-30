@@ -31,17 +31,21 @@
   #statut { margin-top:12px; color:var(--gris); }
   .prevu { color:var(--gris); font-weight:600; }
   .prevu i { font-weight:400; font-size:12px; }
+  #villes { display:flex; gap:8px; margin-bottom:12px; }
+  #villes button { flex:1; padding:12px; font-weight:700; background:#fff; color:var(--texte); border:2px solid #ddd; }
+  #villes button.actif { background:var(--texte); color:#fff; border-color:var(--texte); }
 </style>
 </head>
 <body>
-<header>🚌 Mon bus Ilevia</header>
+<header>🚌 Mon bus</header>
 <main>
+  <div id="villes"><button data-ville="LILLE">LILLE</button><button data-ville="PARIS">PARIS</button></div>
   <form id="formulaire">
     <input id="question" placeholder="ex : 14 CO1 République Beaux-Arts" autocomplete="off">
     <button>OK</button>
   </form>
   <button id="micro">🎤 Reste appuyé pour parler</button>
-  <p class="aide">Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche. Métro : horaires prévus seulement.</p>
+  <p class="aide" id="aideVille"></p>
   <div id="recents"></div>
   <div id="statut"></div>
   <div id="resultats"></div>
@@ -72,11 +76,16 @@ function analyser(question) {
     if ((m === "LIANE" || m === "L") && chiffre(suivant)) { res.push("L" + chiffre(suivant)); i++; continue; }
     if (m === "C" && chiffre(suivant)) { res.push("C" + chiffre(suivant)); i++; continue; }
     if (/^CO\d+[AB]?$/.test(m)) { res.push("C" + m.slice(2)); continue; }
+    // Paris : « RER A », « métro 4 », « tram 3a » -> ligne forcée (marquée #)
+    if (m === "RER" && /^[A-E]$/.test(suivant || "")) { res.push("#" + suivant); i++; continue; }
+    if ((m === "METRO" || m === "M") && chiffre(suivant)) { res.push("#" + chiffre(suivant)); i++; continue; }
+    if (m === "TRAM" && /^\d{1,2}[AB]?$/.test(suivant || "")) { res.push("#T" + suivant); i++; continue; }
     res.push(m);
   }
   const lignes = [], arret = [];
   for (const m of res) {
-    if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push(m);
+    if (m.startsWith("#")) lignes.push(m.slice(1));
+    else if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push(m);
     else if (!VIDES.has(m)) arret.push(m);
   }
   return { lignes, arret };
@@ -119,8 +128,17 @@ async function chargerHoraires(prefixe) {
   return CACHE[prefixe];
 }
 
-// Temps réel : passages Ilevia pour un nom d'arrêt (le flux ne donne que 1 ou 2 bus par ligne)
-async function chargerTempsReel(nomArret) {
+// Temps réel : passages Ilevia d'un arrêt (le flux ne donne que 1 ou 2 bus par ligne).
+// On cherche par code de quai (ex. PDO…) car le nom peut différer (« LILLE PORTE DE DOUAI » vs « Porte de Douai »).
+async function chargerTempsReel(nomArret, prefixes) {
+  if (prefixes && prefixes.length) {
+    const params = new URLSearchParams({
+      service: "WFS", version: "2.0.0", request: "GetFeature",
+      typeNames: "dsp_ilevia:prochains_passages", outputFormat: "application/json",
+      CQL_FILTER: prefixes.map(x => `code_arret_physique LIKE '${x.replace(/[^A-Z0-9]/g, "")}%'`).join(" OR ")
+    });
+    return (await (await fetch(`${WFS}?${params}`)).json()).features.map(f => f.properties);
+  }
   const mots = nomArret.split(" ").filter(m => m.length >= 2).map(m => m.replace(/'/g, ""));
   const params = new URLSearchParams({
     service: "WFS", version: "2.0.0", request: "GetFeature",
@@ -131,52 +149,92 @@ async function chargerTempsReel(nomArret) {
   return data.features.map(f => f.properties).filter(p => normaliser(p.nom_station) === nomArret);
 }
 
-async function chercher(question) {
-  question = question.trim();
-  if (!question) return;
-  const { lignes, arret } = analyser(question);
-  if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. Exemple : 14 République Beaux-Arts"; return; }
-  $("statut").textContent = "Recherche…";
-  $("resultats").innerHTML = "";
+// ===================== Choix de la ville =====================
+let VILLE = "LILLE";
+try { VILLE = localStorage.getItem("ville") || "LILLE"; } catch {}
+const AIDES = {
+  LILLE: "Dis les lignes puis l'arrêt : « le 14 et la CO1 à République Beaux-Arts ». Sans ligne, tout s'affiche.",
+  PARIS: "Dis les lignes puis l'arrêt : « métro 4 et RER A à Châtelet ». Sans ligne, tout s'affiche."
+};
+const EXEMPLES = { LILLE: "ex : 14 CO1 République Beaux-Arts", PARIS: "ex : métro 4 RER A Châtelet" };
+function choisirVille(v) {
+  VILLE = v;
+  try { localStorage.setItem("ville", v); } catch {}
+  document.querySelectorAll("#villes button").forEach(b => b.classList.toggle("actif", b.dataset.ville === v));
+  $("aideVille").textContent = AIDES[v];
+  $("question").placeholder = EXEMPLES[v];
+  $("resultats").innerHTML = ""; $("statut").textContent = "";
+  montrerRecents();
+}
+document.querySelectorAll("#villes button").forEach(b => b.onclick = () => choisirVille(b.dataset.ville));
 
-  // 1. Choix de l'arrêt dans la liste officielle : le plus long nom dont TOUS les mots sont dans la question
-  const index = await chargerIndex();
-  const motsQuestion = new Set(arret);
-  const noms = Object.keys(index);
-  let arretChoisi = noms.filter(n => n.split(" ").every(m => motsQuestion.has(m)))
-                        .sort((a, b) => b.length - a.length)[0];
-  if (!arretChoisi) {
-    const score = n => n.split(" ").filter(m => motsQuestion.has(m)).length;
-    const meilleur = noms.sort((a, b) => score(b) - score(a))[0];
-    arretChoisi = meilleur && score(meilleur) > 0 ? meilleur : arret.join(" ");
-  }
+// Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
+const motsUtiles = nom => nom.split(" ").filter(m => !VIDES.has(m));
+function meilleurNom(noms, arret) {
+  const q = new Set(arret);
+  const complets = noms.filter(n => motsUtiles(n).length && motsUtiles(n).every(m => q.has(m)))
+                       .sort((a, b) => motsUtiles(b).length - motsUtiles(a).length);
+  if (complets.length) return complets[0];
+  const score = n => motsUtiles(n).filter(m => q.has(m)).length;
+  const meilleur = [...noms].sort((a, b) => score(b) - score(a))[0];
+  return meilleur && score(meilleur) > 0 ? meilleur : null;
+}
 
-  // 2. Temps réel + horaires prévus de cet arrêt
-  let tempsReel = [], tempsReelOk = true;
-  try { tempsReel = await chargerTempsReel(arretChoisi); } catch { tempsReelOk = false; }
-  const prevus = (await Promise.all((index[arretChoisi] || []).map(chargerHoraires))).flat();
-
-  const maintenant = new Date();
-  const items = [];
-  for (const p of tempsReel) {
-    const q = preciserBoucle(p);
-    // L'heure du flux finit par "Z" mais c'est déjà l'heure locale : on retire le Z
-    items.push({ ligne: q.code_ligne, sens: normaliser(q.sens_ligne), h: new Date(p.heure_estimee_depart.replace("Z", "")), prevu: false });
-  }
-  // Libellé du sens pour un horaire prévu : celui du temps réel qui lui ressemble le plus
+// Libellé d'une direction prévue : le sens temps réel qui lui ressemble le plus (sinon la direction elle-même)
+function libelleur(items) {
   const sensConnus = {};
   for (const it of items) (sensConnus[it.ligne] ??= new Set()).add(it.sens);
-  const libelle = (ligne, direction) => {
+  return (ligne, direction) => {
     const mots = normaliser(direction).split(" ");
     let best = null, bestScore = 0, egalite = false;
     for (const s of sensConnus[ligne] || []) {
-      // Part des mots du sens temps réel retrouvés dans la direction prévue (CHATEAU -> 1/1 bat WAMBRECHIES AGRIPPIN -> 1/2)
+      // Part des mots du sens temps réel retrouvés (CHATEAU -> 1/1 bat WAMBRECHIES AGRIPPIN -> 1/2)
       const sc = s.split(" ").filter(m => mots.includes(m)).length / s.split(" ").length;
       if (sc > bestScore) { best = s; bestScore = sc; egalite = false; }
       else if (sc === bestScore && sc > 0) egalite = true;
     }
     return best && !egalite ? best : normaliser(direction);
   };
+}
+
+// ===================== Point d'entrée =====================
+async function chercher(question) {
+  question = question.trim();
+  if (!question) return;
+  const { lignes, arret } = analyser(question);
+  if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. " + EXEMPLES[VILLE]; return; }
+  $("statut").textContent = "Recherche…";
+  $("resultats").innerHTML = "";
+  let r;
+  try { r = VILLE === "PARIS" ? await chercherParis(arret) : await chercherLille(arret); }
+  catch (e) { $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
+  if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
+
+  // Filtres : lignes demandées ("C1" garde C1A et C1B), puis direction (mots restants de la phrase)
+  const maintenant = new Date();
+  let liste = r.items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
+  if (lignes.length) liste = liste.filter(it => lignes.includes(it.ligne) || lignes.includes(it.ligne.replace(/[AB]$/, "")));
+  const restants = arret.filter(m => !normaliser(r.nom).split(" ").includes(m));
+  const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
+  if (avecSens.length) liste = avecSens;
+  afficher(r.titre, liste, question, r.tempsReelOk);
+}
+
+// ===================== LILLE (Ilevia) =====================
+async function chercherLille(arret) {
+  const index = await chargerIndex();
+  const nom = meilleurNom(Object.keys(index), arret) || arret.join(" ");
+  let tempsReel = [], tempsReelOk = true;
+  try { tempsReel = await chargerTempsReel(nom, index[nom]); } catch { tempsReelOk = false; }
+  const prevus = (await Promise.all((index[nom] || []).map(chargerHoraires))).flat();
+
+  const maintenant = new Date(), items = [];
+  for (const p of tempsReel) {
+    const q = preciserBoucle(p);
+    // L'heure du flux finit par "Z" mais c'est déjà l'heure locale : on retire le Z
+    items.push({ ligne: q.code_ligne, sens: normaliser(q.sens_ligne), h: new Date(p.heure_estimee_depart.replace("Z", "")), prevu: false });
+  }
+  const libelle = libelleur(items);
   const limite = maintenant.getTime() + 36 * 3600000;
   for (const [d, hm, ligne, direction, quai] of prevus) {
     const [H, M] = hm.split(":").map(Number);
@@ -185,15 +243,74 @@ async function chercher(question) {
     const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
     items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
   }
+  return { nom, titre: nom, items, tempsReelOk };
+}
 
-  // 3. Filtres : lignes demandées ("C1" garde C1A et C1B), puis direction (mots restants de la phrase)
-  let liste = items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
-  if (lignes.length) liste = liste.filter(it => lignes.includes(it.ligne) || lignes.includes(it.ligne.replace(/[AB]$/, "")));
-  const restants = arret.filter(m => !arretChoisi.split(" ").includes(m));
-  const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
-  if (avecSens.length) liste = avecSens;
+// ===================== PARIS (Île-de-France Mobilités / PRIM) =====================
+// Clé PRIM gratuite (compte de Nice). Elle est visible ici : si elle est abusée, en régénérer une sur PRIM.
+const PRIM = "https://prim.iledefrance-mobilites.fr/marketplace";
+const CLE_PRIM = "4nXb9R6YGCqMyntuh0GmKY3U8xtlSk27";
+const prim = async chemin => {
+  const r = await fetch(PRIM + chemin, { headers: { apikey: CLE_PRIM } });
+  if (!r.ok) throw new Error("PRIM " + r.status);
+  return r.json();
+};
+const LIGNES_IDFM = {}; // C01371 -> { code, couleur, texte }
+async function infoLigne(id) {
+  if (!LIGNES_IDFM[id]) {
+    try {
+      const l = (await prim(`/v2/navitia/lines/line:IDFM:${id}`)).lines[0];
+      LIGNES_IDFM[id] = { code: l.code, couleur: l.color, texte: l.text_color };
+    } catch { LIGNES_IDFM[id] = { code: id }; }
+  }
+  return LIGNES_IDFM[id];
+}
+// Heure Navitia "20261030T220700" (heure de Paris)
+const dateNavitia = s => new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15));
+const sansCommune = s => s.replace(/\s*\(.*?\)\s*/g, " ").trim(); // "La Défense (Puteaux)" -> "La Défense"
 
-  afficher(arretChoisi, liste, question, tempsReelOk);
+async function chercherParis(arret) {
+  // 1. Arrêt : on cherche la phrase entière puis chaque mot, et on garde le nom qui colle le mieux
+  const requetes = [arret.join(" "), ...arret.filter(m => m.length >= 3)];
+  const trouves = {};
+  for (const res of await Promise.all(requetes.map(q =>
+      prim(`/v2/navitia/places?q=${encodeURIComponent(q)}&type%5B%5D=stop_area&count=8`).catch(() => ({}))))) {
+    for (const p of res.places || []) if (p.stop_area && !trouves[normaliser(p.stop_area.name)]) trouves[normaliser(p.stop_area.name)] = p.stop_area;
+  }
+  const nom = meilleurNom(Object.keys(trouves), arret);
+  if (!nom) return null;
+  const zone = trouves[nom];
+  const num = zone.id.split(":").pop();
+
+  // 2. Prévu (Navitia) et temps réel (SIRI) en parallèle
+  const [dep, sm] = await Promise.all([
+    prim(`/v2/navitia/stop_areas/${zone.id}/departures?count=150&data_freshness=base_schedule`).catch(() => ({ departures: [] })),
+    prim(`/stop-monitoring?MonitoringRef=${encodeURIComponent(`STIF:StopArea:SP:${num}:`)}`).catch(() => null)
+  ]);
+  const items = [];
+  for (const d of dep.departures || []) {
+    const id = (d.route?.line?.id || "").split(":").pop();
+    const di = d.display_informations;
+    if (id) LIGNES_IDFM[id] ??= { code: di.code, couleur: di.color, texte: di.text_color };
+  }
+  const visites = sm?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0]?.MonitoredStopVisit || [];
+  for (const v of visites) {
+    const j = v.MonitoredVehicleJourney, c = j.MonitoredCall || {};
+    const t = c.ExpectedDepartureTime || c.ExpectedArrivalTime || c.AimedDepartureTime || c.AimedArrivalTime;
+    const id = (j.LineRef?.value || "").split(":").filter(Boolean).pop();
+    const dest = j.DestinationName?.[0]?.value || j.DirectionName?.[0]?.value || "";
+    if (!t || !id) continue;
+    const info = await infoLigne(id);
+    items.push({ ligne: (info.code || id).toUpperCase(), sens: normaliser(dest), h: new Date(t), prevu: false, couleur: info.couleur, texte: info.texte });
+  }
+  const libelle = libelleur(items);
+  for (const d of dep.departures || []) {
+    const di = d.display_informations;
+    const code = (di.code || "").toUpperCase();
+    items.push({ ligne: code, sens: libelle(code, sansCommune(di.direction || "")), h: dateNavitia(d.stop_date_time.departure_date_time),
+                 prevu: true, couleur: di.color, texte: di.text_color });
+  }
+  return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm };
 }
 
 // Par ligne + direction : les bus en temps réel, complétés par les horaires prévus
@@ -224,10 +341,11 @@ function afficher(arret, liste, question, tempsReelOk) {
   for (const [cle, choix] of lignesAff) {
     const [ligne, sens] = cle.split("|");
     const [premier, ...suivants] = choix;
-    html += `<div class="ligne"><span class="num">${ligne}</span><span class="sens">→ ${titre(sens)}</span>
+    const style = premier.couleur ? ` style="background:#${premier.couleur};color:#${premier.texte || "FFFFFF"}"` : "";
+    html += `<div class="ligne"><span class="num"${style}>${ligne}</span><span class="sens">→ ${titre(sens)}</span>
              <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
   }
-  html += `</div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique Ilevia</p>`;
+  html += `</div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : "Ilevia"}</p>`;
   $("resultats").innerHTML = html;
 }
 
@@ -239,14 +357,15 @@ function quand(p, maintenant, petit) {
   return p.prevu ? `<span class="prevu">${txt} <i>prévu</i></span>` : `${txt}${petit ? "" : " 📡"}`;
 }
 
-const titre = s => s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+const titre = s => s.toLowerCase().replace(/(?<=^|[\s(])\S/g, c => c.toUpperCase());
 
 // Questions récentes (gardées sur ce téléphone)
-function lireRecents() { try { return JSON.parse(localStorage.getItem("recents") || "[]"); } catch { return []; } }
+const cleRecents = () => VILLE === "LILLE" ? "recents" : "recents_" + VILLE;
+function lireRecents() { try { return JSON.parse(localStorage.getItem(cleRecents()) || "[]"); } catch { return []; } }
 function memoriser(q) {
   try {
     const l = [q, ...lireRecents().filter(x => normaliser(x) !== normaliser(q))].slice(0, 5);
-    localStorage.setItem("recents", JSON.stringify(l));
+    localStorage.setItem(cleRecents(), JSON.stringify(l));
   } catch {}
   montrerRecents();
 }
@@ -298,7 +417,7 @@ if (!Reco) {
   $("micro").addEventListener("contextmenu", e => e.preventDefault());
 }
 
-montrerRecents();
+choisirVille(VILLE);
 </script>
 </body>
 </html>
