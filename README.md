@@ -23,3 +23,7 @@ sur 299 849 horaires par rapport à l'ancien format. Temps réel : flux GTFS-RT 
 - Montpellier Méditerranée Métropole (TaM) : GTFS (gtfsproxy.e-tam.fr), horaires prévus
 - Île-de-France Mobilités (PRIM) : licences ODbL / Licence Mobilités / Etalab selon les jeux
 Les fichiers générés dans `horaires/` sont des bases dérivées de ces données.
+
+## Tests
+
+`node tests/tester_villes.js [adresse]` : pose une série de questions à chaque ville (arrêt trouvé, directions, doublons, homonymes). En local, générer `horaires/` puis lancer `python3 -m http.server 8765`. La nuit, beaucoup de lignes ne roulent pas.
