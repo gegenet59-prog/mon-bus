@@ -102,7 +102,8 @@ def main():
             lat, lon = float(l["stop_lat"]), float(l["stop_lon"])
         except (ValueError, KeyError):
             continue
-        nom = normaliser(l["stop_name"])
+        # « Laennec Quai B » et « Laennec Quai A » sont le même arrêt : on retire le nom du quai
+        nom = re.sub(r"\s+(QUAI|QUAIS|QUAY|POTEAU)\s+\w+$", "", normaliser(l["stop_name"]))
         pid = l.get("parent_station") or ""
         if not pid or pid not in stops:
             pid = None

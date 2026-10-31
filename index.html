@@ -92,7 +92,7 @@
   <p class="aide sources">Données : <a href="https://data.lillemetropole.fr">Ilevia / Métropole Européenne de Lille</a> ·
     <a href="https://transport.data.gouv.fr/datasets/horaires-sncf">SNCF Voyageurs</a> (ODbL) ·
     <a href="https://prim.iledefrance-mobilites.fr">Île-de-France Mobilités – PRIM</a> ·
-    <a href="https://transport.data.gouv.fr">TBM, STAR via transport.data.gouv.fr</a>.
+    <a href="https://transport.data.gouv.fr">autres réseaux via transport.data.gouv.fr</a>.
     Horaires mis à jour chaque nuit, temps réel en direct.</p>
 </main>
 <script>
@@ -179,16 +179,15 @@ let INDEX = null, QUAIS = {}, LIGNES_LILLE = {};
 const CACHE = {};
 async function chargerIndex() {
   if (INDEX) return INDEX;
-  try { const d = await (await fetch("horaires/stations.json")).json(); INDEX = d.stations; QUAIS = d.quais || {}; LIGNES_LILLE = d.lignes || {}; }
+  try { INDEX = (await (await fetch("horaires/lille/stations.json")).json()).stations; }
   catch { INDEX = {}; }
   return INDEX;
 }
-async function chargerHoraires(id) {
-  if (!CACHE[id]) {
-    try { const r = await fetch(`horaires/${id}.json`); CACHE[id] = r.ok ? (await r.json()).passages : []; }
-    catch { CACHE[id] = []; }
-  }
-  return CACHE[id];
+// Fichier compacté d'un arrêt (format du moteur commun, voir scripts/build_ville.py)
+async function chargerCompact(dossier, id) {
+  const cle = `${dossier}/${id}`;
+  if (!(cle in CACHE_GTFS)) { try { CACHE_GTFS[cle] = await (await fetch(`horaires/${dossier}/${id}.json`)).json(); } catch { CACHE_GTFS[cle] = null; } }
+  return CACHE_GTFS[cle];
 }
 
 // Temps réel : passages Ilevia d'un arrêt (le flux ne donne que 1 ou 2 bus par ligne).
@@ -234,7 +233,8 @@ const VILLES = [
   { id: "GRENOBLE", nom: "Grenoble", centre: [45.19, 5.72] },
   { id: "SAINT-ETIENNE", nom: "Saint-Étienne", centre: [45.44, 4.39] },
   { id: "BREST", nom: "Brest", centre: [48.39, -4.49] },
-  { id: "AMIENS", nom: "Amiens", centre: [49.89, 2.30] }
+  { id: "AMIENS", nom: "Amiens", centre: [49.89, 2.30], dispo: true, gtfs: "amiens", source: "Ametis",
+    rt: "https://proxy.transport.data.gouv.fr/resource/ametis-amiens-gtfs-rt-trip-update", exemple: "ligne 1 Gare du Nord" }
 ];
 let VILLE_GPS = null, POSITION = null;
 function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("visible"); setTimeout(() => e.classList.remove("visible"), 2500); }
@@ -405,9 +405,14 @@ async function chercherLille(arret, force) {
   let tempsReel = [], tempsReelOk = true;
   // Arrêt précis (Autour de moi) ou tous les arrêts de ce nom (ex. Wagner à Lille ET à Wattrelos)
   const ids = force?.id ? [force.id] : (index[nom] || []);
-  const quais = ids.flatMap(id => QUAIS[id] || []);
+  const fichiers = (await Promise.all(ids.map(id => chargerCompact("lille", id)))).filter(Boolean);
+  // codes de quais (pour le temps réel Ilevia) et type/couleurs des lignes, lus dans les fichiers de l'arrêt
+  const quais = [...new Set(fichiers.flatMap(f => f.q))];
+  for (const f of fichiers) for (const [code, type, couleur, texte] of f.l) LIGNES_LILLE[code] = [type, couleur, texte];
   try { tempsReel = await chargerTempsReel(nom, quais); } catch { tempsReelOk = false; }
-  const prevus = (await Promise.all(ids.map(chargerHoraires))).flat();
+  const prevus = [];
+  for (const f of fichiers) for (const [d, lignes] of Object.entries(f.j))
+    for (const [min, li, si, qi] of lignes) prevus.push([d, min, f.l[li][0], f.s[si], f.q[qi]]);
 
   const maintenant = new Date(), items = [];
   for (const p of tempsReel) {
@@ -417,9 +422,8 @@ async function chercherLille(arret, force) {
   }
   const libelle = libelleur(items);
   const limite = maintenant.getTime() + 36 * 3600000;
-  for (const [d, hm, ligne, direction, quai] of prevus) {
-    const [H, M] = hm.split(":").map(Number);
-    const h = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), H, M); // 25:10 = lendemain 01:10
+  for (const [d, min, ligne, direction, quai] of prevus) {
+    const h = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), 0, min); // 1510 min = lendemain 01:10
     if (h < maintenant || h > limite) continue;
     const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
     items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
@@ -429,7 +433,7 @@ async function chercherLille(arret, force) {
   // TER : la gare portant ce nom, ou les gares à moins de 500 m de l'arrêt choisi
   let garesProches = nomsGares[nom] ? [nomsGares[nom]] : [];
   if (!garesProches.length && ids.length) {
-    ARRETS_LILLE ??= await (await fetch("horaires/arrets.json")).json().catch(() => []);
+    ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json().catch(() => []);
     const pos = ARRETS_LILLE.filter(a => ids.includes(a[0]));
     garesProches = gares.filter(g => pos.some(a => distance(a[3], a[4], g[2], g[3]) < 500));
   }
@@ -973,7 +977,7 @@ async function autourDeMoi() {
           if (proches.length === 5) break;
         }
       } else {
-        ARRETS_LILLE ??= await (await fetch("horaires/arrets.json")).json();
+        ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json();
         proches = ARRETS_LILLE.map(([id, nom, commune, a, b]) => ({ nom, m: distance(la, lo, a, b), force: { nom, id, commune } }))
           .sort((x, y) => x.m - y.m).slice(0, 5);
       }

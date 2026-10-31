@@ -28,8 +28,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Fabrique les horaires du jour
-        run: python3 scripts/build_horaires.py
+      - name: Lille (Ilevia)
+        run: python3 scripts/build_ville.py LILLE "https://media.ilevia.fr/opendata/gtfs.zip"
       - name: Horaires des TER de la métropole lilloise (SNCF)
         run: python3 scripts/build_ter.py
         continue-on-error: true
@@ -38,6 +38,9 @@ jobs:
         continue-on-error: true
       - name: Rennes (STAR)
         run: python3 scripts/build_ville.py RENNES "https://eu.ftp.opendatasoft.com/star/gtfs/GTFS_STAR_BUS_METRO_EN_COURS.zip"
+        continue-on-error: true
+      - name: Amiens (Ametis)
+        run: python3 scripts/build_ville.py AMIENS "https://www.data.gouv.fr/api/1/datasets/r/5bc8b7dc-0d4e-48e7-b2ec-eccfe3702c19"
         continue-on-error: true
       - name: Liste des arrêts d'Île-de-France (Autour de moi, mode PARIS)
         run: python3 scripts/build_arrets_paris.py
