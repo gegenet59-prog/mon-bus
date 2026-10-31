@@ -10,7 +10,8 @@ Usage : python3 scripts/build_ville.py <ville> <chemin_ou_url_du_gtfs.zip> [doss
          "s": [direction, ...],                              directions
          "q": [quai, ...],                                   codes de quais (stop_id)
          "t": [trajet, ...],                                 identifiants de trajets (pour le temps réel)
-         "j": {"AAAAMMJJ": [[minutes, n° ligne, n° direction, n° quai, n° trajet, n° d'ordre dans le trajet], ...]}}
+         "j": {"AAAAMMJJ": [[minutes, n° ligne, n° direction, n° quai, n° trajet, n° d'ordre, n° arrêt suivant], ...]}}
+     L'arrêt suivant (rangé dans la table « s ») sert à distinguer deux sens qui affichent la même direction (boucles).
      « minutes » = minutes depuis minuit du jour de service (peut dépasser 1440 : bus après minuit).
 Compacter = écrire chaque nom une seule fois et le remplacer ensuite par son numéro : aucune information perdue.
 """
@@ -132,14 +133,18 @@ def main():
     trajets = {l["trip_id"]: (l["route_id"], l.get("trip_headsign", ""), actifs[l["service_id"]])
                for l in lire(z, "trips.txt") if actifs.get(l["service_id"])}
 
-    # Dernier arrêt de chaque trajet (pas un départ) et direction par défaut = son nom
-    fin = {}
+    # Ordre des arrêts de chaque trajet : terminus (pas un départ), direction par défaut et arrêt suivant
+    ordre = defaultdict(list)
     for l in lire(z, "stop_times.txt"):
-        t = l["trip_id"]
-        if t in trajets:
-            s = int(l["stop_sequence"])
-            if s > fin.get(t, (-1, ""))[0]:
-                fin[t] = (s, l["stop_id"])
+        if l["trip_id"] in trajets:
+            ordre[l["trip_id"]].append((int(l["stop_sequence"]), l["stop_id"]))
+    fin, suivant = {}, {}
+    for t, liste in ordre.items():
+        liste.sort()
+        fin[t] = liste[-1]
+        for (s1, a), (s2, b) in zip(liste, liste[1:]):
+            suivant[(t, s1)] = normaliser(stops.get(b, {}).get("stop_name", ""))
+    del ordre
 
     par_arret = defaultdict(list)
     for l in lire(z, "stop_times.txt"):
@@ -159,7 +164,7 @@ def main():
         for d in dates:
             if d == hier and minutes < 1440:
                 continue
-            par_arret[parent_de[l["stop_id"]]].append((d, minutes, route, direction, l["stop_id"], t, s))
+            par_arret[parent_de[l["stop_id"]]].append((d, minutes, route, direction, l["stop_id"], t, s, suivant.get((t, s), "")))
 
     # ---------- Écriture compactée ----------
     os.makedirs(sortie, exist_ok=True)
@@ -176,9 +181,9 @@ def main():
             return idx[cle][valeur]
 
         j = defaultdict(list)
-        for d, minutes, route, direction, quai, t, s in liste:
+        for d, minutes, route, direction, quai, t, s, via in liste:
             j[d].append([minutes, num("l", route, lignes.get(route, [route, 3, "", "", route])), num("s", direction),
-                         num("q", quai), num("t", t), s])
+                         num("q", quai), num("t", t), s, num("s", via)])
             total += 1
         with open(os.path.join(sortie, f"{sur[pid]}.json"), "w", encoding="utf-8") as f:
             json.dump({**tables, "j": j}, f, ensure_ascii=False, separators=(",", ":"))

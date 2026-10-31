@@ -229,7 +229,7 @@ const VILLES = [
   { id: "BREST", nom: "Brest", centre: [48.39, -4.49] },
   { id: "AMIENS", nom: "Amiens", centre: [49.89, 2.30] }
 ];
-let VILLE_GPS = null;
+let VILLE_GPS = null, POSITION = null;
 function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("visible"); setTimeout(() => e.classList.remove("visible"), 2500); }
 // Barre coulissante : ville détectée par GPS en premier, puis ta ville choisie, puis les autres dispo, puis « bientôt »
 function construireBarre() {
@@ -277,7 +277,9 @@ $("gps").onclick = () => autourDeMoi();
 // Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
 const motsUtiles = nom => nom.split(" ").filter(m => !VIDES.has(m));
 // Deux mots « pareils » malgré une faute de frappe ou un pluriel (FLANDRE / FLANDRES, REPUBLIQE / REPUBLIQUE)
+const ABREV = { ST: "SAINT", STE: "SAINTE", GL: "GENERAL", PL: "PLACE", AV: "AVENUE", BD: "BOULEVARD" };
 function proche(a, b) {
+  a = ABREV[a] || a; b = ABREV[b] || b;
   if (a === b) return true;
   if (Math.min(a.length, b.length) >= 3 && (a + "S" === b || b + "S" === a || a + "X" === b || b + "X" === a)) return true;
   if (a.length < 4 || b.length < 4) return false;
@@ -337,13 +339,28 @@ async function chercher(question, opts = {}) {
   if (!question) return;
   const { lignes, arret } = analyser(question);
   if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. " + (EXEMPLES[VILLE] || ""); return; }
-  if (!opts.silencieux) { $("statut").textContent = "Recherche…"; $("resultats").innerHTML = ""; }
+  if (!opts.silencieux) {
+    $("statut").textContent = "Recherche…"; $("resultats").innerHTML = "";
+    if (!opts.force) $("proches").innerHTML = "";   // les boutons d'arrêts restent seulement si on choisit parmi eux
+  }
   let r;
   try { r = VILLE === "PARIS" ? await chercherParis(arret, opts.force) : VILLE === "LILLE" ? await chercherLille(arret, opts.force)
                                                                        : await chercherGtfs(villeActuelle(), arret, opts.force); }
   catch (e) { if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
   DERNIERE = { question, force: opts.force, ville: VILLE };
+  if (CHOIX_SECTEURS && !opts.silencieux) {
+    const { nom, secteurs } = CHOIX_SECTEURS;
+    $("proches").innerHTML = "";
+    secteurs.forEach((sct, n) => {
+      const b = document.createElement("button");
+      b.textContent = `📍 ${titre(nom)} ${sct.commune ? "· " + sct.commune : "· n°" + (n + 1)}${POSITION ? " · " + Math.round(distance(...POSITION, sct.a, sct.b) / 100) / 10 + " km" : ""}`;
+      b.onclick = () => chercher(question, { force: { nom, ids: sct.ids, commune: sct.commune } });
+      $("proches").appendChild(b);
+    });
+    toast(`Il y a ${secteurs.length} arrêts « ${titre(nom)} » : choisis le bon dans les boutons`);
+  }
+  CHOIX_SECTEURS = null;
 
   // Filtres : lignes demandées ("C1" garde C1A et C1B), puis direction (mots restants de la phrase)
   const maintenant = new Date();
@@ -498,6 +515,7 @@ async function trainsTer(gares, maintenant, limite, nomArret = "") {
 
 // ===================== MOTEUR COMMUN (Bordeaux, Rennes… : GTFS + GTFS-RT) =====================
 const INDEX_GTFS = {}, CACHE_GTFS = {}, RT_GTFS = {};
+let CHOIX_SECTEURS = null;
 const NOMS_MODES = { 0: ["TRAM", "Tram"], 1: ["METRO", "Métro"], 2: ["TRAIN", "Train"], 3: ["BUS", "Bus"], 4: ["BUS", "Bateau"],
                      5: ["TRAM", "Tram"], 6: ["BUS", "Téléphérique"], 7: ["TRAM", "Funiculaire"], 11: ["BUS", "Trolley"] };
 
@@ -547,7 +565,29 @@ async function chercherGtfs(conf, arret, force) {
   const index = INDEX_GTFS[conf.id];
   const nom = force?.nom || meilleurNom(Object.keys(index), arret);
   if (!nom) return null;
-  const ids = force?.ids || (force?.id ? [force.id] : (index[nom] || []));
+  let ids = force?.ids || (force?.id ? [force.id] : (index[nom] || []));
+  // Même nom à plusieurs endroits (communes différentes) : on regroupe par secteur et on propose le choix
+  if (!force && ids.length > 1) {
+    ARRETS_GTFS[conf.id] ??= await (await fetch(`${dossier}/arrets.json`)).json().catch(() => []);
+    const pos = Object.fromEntries(ARRETS_GTFS[conf.id].map(a => [a[0], a]));
+    const secteurs = [];
+    for (const id of ids) {
+      const p = pos[id]; if (!p) continue;
+      const s = secteurs.find(x => distance(x.a, x.b, p[3], p[4]) < 1000);
+      if (s) s.ids.push(id); else secteurs.push({ a: p[3], b: p[4], ids: [id], commune: p[2] });
+    }
+    if (secteurs.length > 1) {
+      // Sans nom de commune dans les données : on situe chaque secteur par l'arrêt voisin le plus proche
+      for (const sct of secteurs) if (!sct.commune) {
+        const voisin = ARRETS_GTFS[conf.id].filter(a => a[1] !== nom)
+          .sort((x, y) => distance(sct.a, sct.b, x[3], x[4]) - distance(sct.a, sct.b, y[3], y[4]))[0];
+        if (voisin) sct.commune = `près de ${titre(voisin[1])}`;
+      }
+      if (POSITION) secteurs.sort((x, y) => distance(...POSITION, x.a, x.b) - distance(...POSITION, y.a, y.b));
+      CHOIX_SECTEURS = { nom, secteurs };
+      ids = secteurs[0].ids;   // le plus proche de toi (ou le premier), les autres sont proposés en boutons
+    }
+  }
   const fichiers = await Promise.all(ids.map(async id => {
     const cle = `${conf.id}/${id}`;
     if (!CACHE_GTFS[cle]) { try { CACHE_GTFS[cle] = await (await fetch(`${dossier}/${id}.json`)).json(); } catch { CACHE_GTFS[cle] = null; } }
@@ -560,13 +600,14 @@ async function chercherGtfs(conf, arret, force) {
     if (!f) continue;
     for (const [d, lignes] of Object.entries(f.j)) {
       const minuit = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
-      for (const [min, li, si, qi, ti, seq] of lignes) {
+      for (const [min, li, si, qi, ti, seq, vi] of lignes) {
         const h = new Date(minuit.getTime() + min * 60000);
         if (h < maintenant - 30 * 60000 || h > limite) continue;    // marge de 30 min pour les bus en retard
         const [code, type, couleur, texte, route] = f.l[li];
         const [mode, nomMode] = NOMS_MODES[type] || NOMS_MODES[3];
         items.push({ ligne: code.toUpperCase(), code: code.toUpperCase(), mode, nomMode, couleur, texte, route, sens: normaliser(f.s[si]),
-                     h, prevue: h, quai: f.q[qi], trip: f.t[ti], seq, prevu: true, independant: true });
+                     h, prevue: h, quai: f.q[qi], trip: f.t[ti], seq, via: vi !== undefined ? normaliser(f.s[vi]) : "",
+                     prevu: true, independant: true });
       }
     }
   }
@@ -606,6 +647,10 @@ async function chercherGtfs(conf, arret, force) {
       }
     } catch { tempsReelOk = false; }
   }
+  // Boucles : même ligne + même direction affichée sur deux quais différents -> on précise « via l'arrêt suivant »
+  const quaisParSens = {};
+  for (const i of items) (quaisParSens[`${i.mode}|${i.ligne}|${i.sens}`] ??= new Set()).add(i.quai);
+  for (const i of items) if (quaisParSens[`${i.mode}|${i.ligne}|${i.sens}`].size > 1 && i.via) i.sens = `${i.sens} (VIA ${i.via})`;
   const liste = items.filter(i => i.h >= new Date(maintenant.getTime() - 60000));
   return { nom, titre: force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom, items: liste, tempsReelOk };
 }
@@ -874,6 +919,7 @@ async function autourDeMoi() {
   $("statut").textContent = "📍 Je cherche où tu es…"; $("resultats").innerHTML = ""; $("proches").innerHTML = "";
   navigator.geolocation.getCurrentPosition(async pos => {
     const { latitude: la, longitude: lo } = pos.coords;
+    POSITION = [la, lo];
     // Tu es dans une autre ville que celle choisie ? On bascule automatiquement
     const ici = villeProche(la, lo);
     if (ici) { VILLE_GPS = ici; if (ici !== VILLE) { choisirVille(ici); toast(`📍 Ville détectée : ${VILLES.find(v => v.id === ici).nom}`); } else construireBarre(); }
@@ -965,6 +1011,7 @@ choisirVille(VILLE);
     if (!navigator.permissions || !navigator.geolocation) return;
     if ((await navigator.permissions.query({ name: "geolocation" })).state !== "granted") return;
     navigator.geolocation.getCurrentPosition(pos => {
+      POSITION = [pos.coords.latitude, pos.coords.longitude];
       const ici = villeProche(pos.coords.latitude, pos.coords.longitude);
       if (!ici) return;
       VILLE_GPS = ici;
