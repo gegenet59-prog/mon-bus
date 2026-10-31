@@ -1,5 +1,5 @@
 # Relais temps réel de Mon bus, déployé automatiquement par Cloudflare Workers (code dans relais/)
 # Ce fichier ne concerne que Cloudflare : le site GitHub Pages n'en tient pas compte.
-name = "mon-bus-relais"
+name = "mon-bus"
 main = "relais/src/index.js"
 compatibility_date = "2026-10-01"
