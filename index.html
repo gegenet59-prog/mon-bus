@@ -3,24 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#d6001c">
+<meta name="theme-color" content="#f4f5fa">
 <title>Mon bus</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icone-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23d6001c'/%3E%3Ctext x='50' y='70' font-size='60' text-anchor='middle'%3E🚌%3C/text%3E%3C/svg%3E">
 <style>
-  :root { --rouge:#d6001c; --fond:#f5f5f7; --texte:#1c1c1e; --gris:#6e6e73; }
+  :root { --rouge:#d6001c; --fond:#f4f5fa; --texte:#1e2761; --gris:#6b7099; --bleu:#408ec6; --bordeaux:#7a2048; --indigo:#1e2761; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,Roboto,sans-serif; background:var(--fond); color:var(--texte); }
-  header { background:var(--rouge); color:#fff; padding:18px 20px; font-size:20px; font-weight:700; }
   main { padding:16px; max-width:520px; margin:0 auto; }
   form { display:flex; gap:8px; }
   input { flex:1; font-size:17px; padding:14px; border:1px solid #ccc; border-radius:12px; }
   button { font-size:17px; border:0; border-radius:12px; padding:0 18px; background:var(--texte); color:#fff; }
-  #micro { width:100%; margin-top:14px; padding:22px; font-size:19px; font-weight:600; background:var(--rouge);
-           user-select:none; -webkit-user-select:none; touch-action:none; }
+  /* Accueil : bonjour + ville, puis deux grandes tuiles (Autour de moi, Parler) */
+  .entete { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0 14px; }
+  .entete .appli { display:block; font-size:13px; font-weight:600; color:var(--bleu); letter-spacing:.2px; }
+  .entete #salut { font-size:28px; font-weight:700; color:var(--indigo); line-height:1.1; }
+  .tuiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+  .tuile { display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:18px; min-height:118px;
+           padding:16px; border-radius:22px; color:#fff; text-align:left; font-size:18px; font-weight:700; }
+  .tuile svg { width:30px; height:30px; }
+  .tuile small { display:block; font-size:12px; font-weight:500; opacity:.85; margin-top:2px; }
+  #gps { background:var(--bleu); }
+  #micro { background:var(--bordeaux); user-select:none; -webkit-user-select:none; touch-action:none; }
   #micro.ecoute { background:#1a7f37; }
+  #micro:disabled { opacity:.6; }
   .aide { color:var(--gris); font-size:14px; margin:10px 2px; }
   #recents { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
   #recents button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
@@ -40,13 +49,13 @@
   .sources { margin-top:28px; font-size:12px; text-align:center; }
   .sources a { color:var(--gris); }
   .supprime { color:#b91c1c; text-decoration:line-through; }
-  #villes { position:relative; margin-bottom:12px; }
-  #villeBtn { width:100%; display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
-              background:var(--texte); color:#fff; font-weight:800; font-size:18px; }
-  #villeBtn small { font-weight:500; font-size:12px; opacity:.85; margin-left:8px; }
+  #villes { position:relative; flex:none; }
+  #villeBtn { display:flex; align-items:center; gap:6px; padding:9px 14px; border-radius:999px;
+              background:var(--indigo); color:#fff; font-weight:700; font-size:15px; }
+  #villeBtn small { font-weight:500; font-size:12px; opacity:.85; }
   #villeBtn .fleche { transition:transform .2s; }
   #villes.ouvert #villeBtn .fleche { transform:rotate(180deg); }
-  #villeListe { display:none; position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:8; background:#fff;
+  #villeListe { display:none; position:absolute; right:0; width:260px; top:calc(100% + 6px); z-index:8; background:#fff;
                 border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,.18); max-height:60vh; overflow-y:auto; padding:6px; }
   #villes.ouvert #villeListe { display:block; }
   #villeListe button { width:100%; text-align:left; background:none; color:var(--texte); padding:13px 14px; font-size:16px;
@@ -58,9 +67,12 @@
   #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--texte); color:#fff;
            padding:10px 16px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9; }
   #toast.visible { opacity:1; }
-  #gps { width:100%; padding:13px; margin-bottom:12px; background:#fff; color:var(--texte); border:2px solid var(--texte); font-weight:700; }
   #proches { display:flex; flex-wrap:wrap; gap:8px; margin:-4px 0 12px; }
   #proches button { background:#eef6ff; color:var(--texte); border:1px solid #bcd7f5; padding:8px 12px; font-size:14px; }
+  .proche { display:inline-flex; align-items:center; gap:6px; }
+  .itin { flex:none; width:36px; height:36px; border-radius:50%; background:#e6f1fb; color:#185fa5; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
+  .itin:active { transform:scale(.95); }
+  h2.avec-itin { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   #favoris { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
   .favori { display:flex; gap:6px; }
   .favori button:first-child { flex:1; text-align:left; padding:14px; background:#fff8d6; color:var(--texte); border:2px solid #f2c94c; font-weight:700; }
@@ -74,17 +86,21 @@
 </style>
 </head>
 <body>
-<header>🚌 Mon bus</header>
 <main>
-  <div id="villes"></div>
+  <div class="entete">
+    <div><span class="appli">Mon bus</span><span id="salut">Bonjour</span></div>
+    <div id="villes"></div>
+  </div>
   <div id="toast"></div>
-  <button id="gps">📍 Autour de moi</button>
+  <div class="tuiles">
+    <button id="gps" class="tuile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span>Autour de moi</span></button>
+    <button id="micro" class="tuile" aria-label="Parler : reste appuyé pour dire l'arrêt et la ligne"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span><span id="microTexte">Parler</span><small id="microAide">Reste appuyé</small></span></button>
+  </div>
   <div id="proches"></div>
   <form id="formulaire">
     <input id="question" placeholder="ex : 14 C1 République Beaux-Arts" autocomplete="off">
     <button>OK</button>
   </form>
-  <button id="micro">🎤 Reste appuyé pour parler</button>
   <p class="aide" id="aideVille"></p>
   <div id="favoris"></div>
   <div id="recents"></div>
@@ -266,7 +282,7 @@ function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("vi
 // Barre coulissante : ville détectée par GPS en premier, puis ta ville choisie, puis les autres dispo, puis « bientôt »
 function construireBarre() {
   const conf = VILLES.find(v => v.id === VILLE) || {};
-  $("villes").innerHTML = `<button id="villeBtn"><span>${conf.nom.toUpperCase()}${VILLE === VILLE_GPS ? "<small>📍 tu es ici</small>" : ""}</span>
+  $("villes").innerHTML = `<button id="villeBtn" aria-label="Ville : ${conf.nom}, changer"><span>${VILLE === VILLE_GPS ? "📍 " : ""}${conf.nom}</span>
     <span class="fleche">▾</span></button><div id="villeListe"></div>`;
   $("villeBtn").onclick = e => { e.stopPropagation(); $("villes").classList.toggle("ouvert"); };
   // Liste : ville détectée par GPS en premier, puis les villes disponibles, puis « bientôt »
@@ -312,6 +328,7 @@ function choisirVille(v) {
 }
 
 $("gps").onclick = () => autourDeMoi();
+$("salut").textContent = new Date().getHours() >= 18 || new Date().getHours() < 5 ? "Bonsoir" : "Bonjour";
 
 // Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
 // « C H DRON » (C.H. Dron) = « CH DRON » : on recolle les lettres seules qui se suivent (sauf A, D, L… qui sont des mots vides)
@@ -447,7 +464,8 @@ async function chercher(question, opts = {}) {
   let liste = r.items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
   if (lignes.length) liste = liste.filter(it => lignes.some(f => correspond(it, f)));
   // mots de la phrase qui ne sont pas le nom de l'arrêt (fautes tolérées) -> direction éventuelle
-  const restants = arret.filter(m => !recoller(normaliser(r.nom).split(" ")).some(w => proche(w, m)));
+  // (le nom affiché compte aussi : « Gare du Nord (Paris) » -> PARIS n'est pas une direction)
+  const restants = arret.filter(m => !recoller(normaliser(r.nom + " " + (r.titre || "")).split(" ")).some(w => proche(w, m)));
   // Le temps réel de Lille raccourcit certains terminus : « Roubaix Eurotéléport » devient « Eurotéléport »
   const voulus = restants.flatMap(m => [m, ...(VILLE === "LILLE" && m === "ROUBAIX" ? ["EUROTELEPORT"] : [])]);
   const avecSens = liste.filter(it => recoller(normaliser(it.sens).split(" ")).some(m => voulus.includes(m)));
@@ -519,7 +537,8 @@ async function chercherLille(arret, force) {
   }
   if (garesProches.length) items.push(...await trainsTer(garesProches, maintenant, limite, nom));
   const titreArret = force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom;
-  return { nom, titre: titreArret, items, tempsReelOk };
+  ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json().catch(() => []);
+  return { nom, titre: titreArret, items, tempsReelOk, position: positionDe(ARRETS_LILLE, ids, 3) };
 }
 
 // ===================== TER (SNCF) dans la métropole lilloise =====================
@@ -753,7 +772,9 @@ async function chercherGtfs(conf, arret, force) {
   for (const i of items) (quaisParSens[`${i.mode}|${i.ligne}|${i.sens}`] ??= new Set()).add(i.quai);
   for (const i of items) if (quaisParSens[`${i.mode}|${i.ligne}|${i.sens}`].size > 1 && i.via) i.sens = `${i.sens} (VIA ${i.via})`;
   const liste = items.filter(i => i.h >= new Date(maintenant.getTime() - 60000));
-  return { nom, titre: force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom, items: liste, tempsReelOk };
+  ARRETS_GTFS[conf.id] ??= await (await fetch(`${dossier}/arrets.json`)).json().catch(() => []);
+  return { nom, titre: force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom, items: liste, tempsReelOk,
+           position: positionDe(ARRETS_GTFS[conf.id], ids, 3) };
 }
 
 // ===================== PARIS (Île-de-France Mobilités / PRIM) =====================
@@ -910,7 +931,9 @@ async function chargerZoneParis(zone, nom, num) {
     items.push(habillerParis({ ligne: code, code: di.code || "", sens: libelle(code, sansCommune(di.direction || "")),
                  h: dateNavitia(d.stop_date_time.departure_date_time), prevu: true, couleur: di.color, texte: di.text_color }, di.commercial_mode, d.route?.line?.name));
   }
-  return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm, perturbationsParis: dep.disruptions || [] };
+  try { ARRETS_PARIS ??= await (await fetch("horaires/arrets_paris.json")).json(); } catch {}
+  return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm, perturbationsParis: dep.disruptions || [],
+           position: positionDe(ARRETS_PARIS, [num], 2) };
 }
 
 // Par ligne + direction : les bus en temps réel, complétés par les horaires prévus
@@ -946,7 +969,7 @@ function afficher(r, liste, question, opts) {
     || String(a[1][0].code ?? a[1][0].ligne).localeCompare(String(b[1][0].code ?? b[1][0].ligne), "fr", { numeric: true })
     || a[0].split("|")[2].localeCompare(b[0].split("|")[2], "fr"));
 
-  let html = `<div class="arret"><h2>${titre(arret)}</h2>`;
+  let html = `<div class="arret"><h2 class="avec-itin"><span>${titre(arret)}</span>${boutonItineraire(r.position, arret)}</h2>`;
   let rangPrecedent = null;
   for (const [cle, choix] of lignesAff) {
     const sens = cle.split("|")[2];
@@ -1063,6 +1086,18 @@ function parler(arret, lignesAff) {
 // ===================== Perturbations =====================
 const sansBalises = t => t.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\u200b/g, " ").trim();
 const echapper = t => t.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Messages Ilevia parfois mal remplis à la source : « Ce , à partir de - en raison… » (date et heure vides),
+// phrases collées (« desservis.Vous », « St PhilibertLe Bois »). On retire les trous et on remet les espaces.
+function nettoyerMessage(t) {
+  t = t.replace(/^\s*(Ce|Le|Du|Depuis le)\s*,\s*/i, "")
+       .replace(/\s*à partir de\s*[-–]\s*/gi, " ")
+       .replace(/\s*jusqu['’]\s*(au|à)\s*[-–,.]\s*/gi, " ")
+       .replace(/^(Actuellement)\s*-\s*/i, "$1, ")
+       .replace(/(?<!\b[A-Z])([.:;!?])(?=[A-ZÀ-ÖØ-Ý►])/g, "$1 ")
+       .replace(/([a-zà-ÿ])(?=[A-ZÀ-ÖØ-Ý][a-zà-ÿ])/g, "$1. ")
+       .replace(/\s{2,}/g, " ").trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 async function afficherPerturbations(r, lignes) {
   const base = new Set(lignes.map(l => l.replace(/^(C\d+)[AB]$/, "$1")));
   let msgs = [];
@@ -1084,13 +1119,13 @@ async function afficherPerturbations(r, lignes) {
         const p = f.properties;
         // cible "ILEVIA:LineRef::14:LOC" ; le métro s'écrit ME1/ME2 dans ce flux, M1/M2 dans les horaires
         const code = (p.cible || "").split("::")[1]?.split(":")[0]?.replace(/^ME(\d)$/, "M$1");
-        if (code && base.has(code)) msgs.push({ lignes: [code], texte: sansBalises(p.message || "") });
+        if (code && base.has(code)) msgs.push({ lignes: [code], texte: nettoyerMessage(sansBalises(p.message || "")) });
       }
     }
   } catch { return; }
   if (!msgs.length || !$("trafic")) return;
   $("trafic").innerHTML = `<div class="arret trafic"><h2>⚠️ Info trafic</h2>` + msgs.map(m =>
-    `<details><summary><b>${m.lignes.map(l => l.replace(/^M(\d)$/, "Métro $1")).join(", ")}</b> · ${echapper(m.texte.slice(0, 70))}${m.texte.length > 70 ? "…" : ""}</summary><p>${echapper(m.texte)}</p></details>`
+    `<details><summary><b>${m.lignes.map(l => l.replace(/^M(\d)$/, "Métro $1")).join(", ")}</b> · ${echapper(m.texte.slice(0, 70))}${m.texte.length > 70 ? "…" : ""}</summary><p>${echapper(m.texte).replace(/\s*►/g, "<br>►")}</p></details>`
   ).join("") + `</div>`;
 }
 
@@ -1103,6 +1138,23 @@ setInterval(() => {
   if (VILLE === "PARIS" && (TOURS % 2 || Date.now() - DERNIERE.t > 600000)) return;
   chercher(DERNIERE.question, { force: DERNIERE.force, silencieux: true });
 }, 30000);
+
+// ===================== Itinéraire à pied vers un arrêt (ouvre l'appli de cartes du téléphone) =====================
+// Position d'un arrêt dans une liste [id, …, lat, lon] ; le plus proche de toi si plusieurs quais
+function positionDe(liste, ids, col) {
+  const pts = (liste || []).filter(a => ids.includes(a[0])).map(a => [a[col], a[col + 1]]);
+  if (!pts.length) return null;
+  return POSITION ? pts.sort((x, y) => distance(...POSITION, ...x) - distance(...POSITION, ...y))[0] : pts[0];
+}
+const SUR_IPHONE = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const PICTO_ITINERAIRE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 21.5 12 12 21.5 2.5 12Z"/><path d="M9.5 15v-2.5a2 2 0 0 1 2-2H15"/><path d="M13 8.5l2 2-2 2"/></svg>`;
+function boutonItineraire(position, nom) {
+  if (!position) return "";
+  const [la, lo] = position;
+  const url = SUR_IPHONE ? `https://maps.apple.com/?daddr=${la},${lo}&dirflg=w`
+                         : `https://www.google.com/maps/dir/?api=1&destination=${la},${lo}&travelmode=walking`;
+  return `<a class="itin" href="${url}" target="_blank" rel="noopener" aria-label="Y aller à pied : ${echapper(titre(nom))}" title="Y aller à pied">${PICTO_ITINERAIRE}</a>`;
+}
 
 // ===================== Autour de moi =====================
 const distance = (a, b, c, d) => { // mètres entre deux points GPS
@@ -1126,7 +1178,7 @@ async function autourDeMoi() {
       if (VILLE === "PARIS") {
         // Liste des arrêts d'Île-de-France (régénérée chaque nuit) : calcul des plus proches sur le téléphone
         ARRETS_PARIS ??= await (await fetch("horaires/arrets_paris.json")).json();
-        proches = ARRETS_PARIS.map(([num, label, a, b]) => ({ nom: label, m: distance(la, lo, a, b),
+        proches = ARRETS_PARIS.map(([num, label, a, b]) => ({ nom: label, m: distance(la, lo, a, b), pos: [a, b],
             force: { zone: { id: `stop_area:IDFM:${num}`, name: sansCommune(label), label } } }))
           .sort((x, y) => x.m - y.m).slice(0, 5);
       } else if (villeActuelle().gtfs) {
@@ -1140,22 +1192,26 @@ async function autourDeMoi() {
           if (vus.has(p.nom)) continue;
           vus.add(p.nom);
           const ids = tous.filter(q => q.nom === p.nom && distance(p.a, p.b, q.a, q.b) < 500).map(q => q.id);
-          proches.push({ nom: p.nom, m: p.m, force: { nom: p.nom, ids, commune: p.commune } });
+          proches.push({ nom: p.nom, m: p.m, pos: [p.a, p.b], force: { nom: p.nom, ids, commune: p.commune } });
           if (proches.length === 5) break;
         }
       } else {
         ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json();
-        proches = ARRETS_LILLE.map(([id, nom, commune, a, b]) => ({ nom, m: distance(la, lo, a, b), force: { nom, id, commune } }))
+        proches = ARRETS_LILLE.map(([id, nom, commune, a, b]) => ({ nom, m: distance(la, lo, a, b), pos: [a, b], force: { nom, id, commune } }))
           .sort((x, y) => x.m - y.m).slice(0, 5);
       }
     } catch { $("statut").textContent = "Impossible de trouver les arrêts proches."; return; }
     if (!proches.length || proches[0].m > 3000) { $("statut").textContent = `Aucun arrêt ${VILLE === "PARIS" ? "parisien" : "Ilevia"} près de toi.`; return; }
     $("proches").innerHTML = "";
     for (const p of proches) {
+      const groupe = document.createElement("span");
+      groupe.className = "proche";
       const b = document.createElement("button");
       b.textContent = `📍 ${titre(p.nom)} · ${Math.round(p.m)} m`;
       b.onclick = () => { $("question").value = titre(p.nom); chercher(p.nom, { force: p.force }); };
-      $("proches").appendChild(b);
+      groupe.appendChild(b);
+      groupe.insertAdjacentHTML("beforeend", boutonItineraire(p.pos, p.nom));
+      $("proches").appendChild(groupe);
     }
     $("question").value = titre(proches[0].nom);
     chercher(proches[0].nom, { force: proches[0].force });
@@ -1169,7 +1225,7 @@ $("formulaire").onsubmit = e => { e.preventDefault(); $("question").blur(); cher
 // Micro : appui long = écoute, on relâche = on cherche
 const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!Reco) {
-  $("micro").textContent = "🎤 Micro non disponible dans ce navigateur";
+  $("microTexte").textContent = "Parler"; $("microAide").textContent = "Micro indisponible ici";
   $("micro").disabled = true;
 } else {
   const reco = new Reco();
@@ -1183,7 +1239,7 @@ if (!Reco) {
   reco.onend = () => {
     enCours = false;
     $("micro").classList.remove("ecoute");
-    $("micro").textContent = "🎤 Reste appuyé pour parler";
+    $("microTexte").textContent = "Parler"; $("microAide").textContent = "Reste appuyé";
     if (texte) chercher(texte, { voix: true });
   };
   reco.onerror = e => { $("statut").textContent = e.error === "not-allowed" ? "Autorise le micro pour cette page." : "Je n'ai rien entendu, réessaie."; };
@@ -1192,7 +1248,7 @@ if (!Reco) {
     if (enCours) return;
     texte = ""; enCours = true;
     $("micro").classList.add("ecoute");
-    $("micro").textContent = "🟢 Je t'écoute… relâche pour chercher";
+    $("microTexte").textContent = "Je t'écoute…"; $("microAide").textContent = "Relâche pour chercher";
     try { reco.start(); } catch {}
   };
   const fin = e => { e.preventDefault(); if (enCours) reco.stop(); };
