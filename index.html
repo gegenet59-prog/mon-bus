@@ -218,7 +218,8 @@ const VILLES = [
   { id: "LILLE", nom: "Lille", centre: [50.63, 3.06], dispo: true },
   { id: "PARIS", nom: "Paris", centre: [48.86, 2.35], dispo: true },
   { id: "LYON", nom: "Lyon", centre: [45.76, 4.84] },
-  { id: "MARSEILLE", nom: "Marseille", centre: [43.30, 5.37] },
+  { id: "MARSEILLE", nom: "Marseille", centre: [43.30, 5.37], dispo: true, gtfs: "marseille", source: "Métropole Aix-Marseille-Provence",
+    exemple: "métro Vieux-Port" },
   { id: "TOULOUSE", nom: "Toulouse", centre: [43.60, 1.44] },
   { id: "BORDEAUX", nom: "Bordeaux", centre: [44.84, -0.58], dispo: true, gtfs: "bordeaux", source: "TBM",
     rt: "https://bdx.mecatran.com/utw/ws/gtfsfeed/realtime/bordeaux?apiKey=opendata-bordeaux-metropole-flux-gtfs-rt",
@@ -229,8 +230,8 @@ const VILLES = [
   { id: "RENNES", nom: "Rennes", centre: [48.11, -1.68], dispo: true, gtfs: "rennes", source: "STAR",
     rt: "https://proxy.transport.data.gouv.fr/resource/star-rennes-integration-gtfs-rt-trip-update",
     exemple: "métro République" },
-  { id: "NICE", nom: "Nice", centre: [43.70, 7.27] },
-  { id: "GRENOBLE", nom: "Grenoble", centre: [45.19, 5.72] },
+  { id: "NICE", nom: "Nice", centre: [43.70, 7.27], dispo: true, gtfs: "nice", source: "Lignes d'Azur", exemple: "tram Masséna" },
+  { id: "GRENOBLE", nom: "Grenoble", centre: [45.19, 5.72], dispo: true, gtfs: "grenoble", source: "M réso (Tag)", exemple: "tram Gares" },
   { id: "SAINT-ETIENNE", nom: "Saint-Étienne", centre: [45.44, 4.39] },
   { id: "BREST", nom: "Brest", centre: [48.39, -4.49] },
   { id: "AMIENS", nom: "Amiens", centre: [49.89, 2.30], dispo: true, gtfs: "amiens", source: "Ametis",
@@ -319,10 +320,12 @@ function meilleurNom(noms, arret) {
   for (const n of noms) {
     const sc = score(n);
     if (!sc.m) continue;
-    const mieux = !bs
-      || (sc.complet && !bs.complet)
-      || (sc.complet === bs.complet && (sc.qm > bs.qm
-          || (sc.qm === bs.qm && (sc.part > bs.part || (sc.part === bs.part && sc.len > bs.len)))));
+    // ordre de préférence : nom complet > mots de la question retrouvés > part du nom retrouvée > nom le plus précis
+    // > à égalité, le nom le plus court (« Castellane » plutôt que « La Castellane »)
+    const cmp = !bs ? 1
+      : (sc.complet - bs.complet) || (sc.qm - bs.qm) || (sc.part - bs.part) || (sc.len - bs.len)
+        || (best.split(" ").length - n.split(" ").length);
+    const mieux = cmp > 0;
     if (mieux) { best = n; bs = sc; }
   }
   return best;

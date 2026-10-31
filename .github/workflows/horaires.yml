@@ -42,6 +42,15 @@ jobs:
       - name: Amiens (Ametis)
         run: python3 scripts/build_ville.py AMIENS "https://www.data.gouv.fr/api/1/datasets/r/5bc8b7dc-0d4e-48e7-b2ec-eccfe3702c19"
         continue-on-error: true
+      - name: Marseille (Métropole Aix-Marseille-Provence)
+        run: python3 scripts/build_ville.py MARSEILLE "https://app.mecatran.com/utw/ws/gtfsfeed/static/mamp?apiKey=60327e505a214c77303f52206f11483069257343"
+        continue-on-error: true
+      - name: Nice (Lignes d'Azur)
+        run: python3 scripts/build_ville.py NICE "https://chouette.enroute.mobi/api/v1/datas/OpendataRLA/gtfs.zip"
+        continue-on-error: true
+      - name: Grenoble (M réso)
+        run: python3 scripts/build_ville.py GRENOBLE "https://data.mobilites-m.fr/api/gtfs/SEM"
+        continue-on-error: true
       - name: Liste des arrêts d'Île-de-France (Autour de moi, mode PARIS)
         run: python3 scripts/build_arrets_paris.py
         continue-on-error: true
