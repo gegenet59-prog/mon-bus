@@ -20,7 +20,7 @@ sur 299 849 horaires par rapport à l'ancien format. Temps réel : flux GTFS-RT 
 - Ilevia / Métropole Européenne de Lille : data.lillemetropole.fr (licence du flux temps réel à confirmer auprès de la MEL)
 - SNCF Voyageurs (TER) : GTFS et GTFS-RT, licence ODbL
 - Bordeaux Métropole (TBM) et Rennes (STAR) : GTFS / GTFS-RT, via transport.data.gouv.fr
-- Montpellier Méditerranée Métropole (TaM) : GTFS (gtfsproxy.e-tam.fr), horaires prévus
+- Montpellier Méditerranée Métropole (TaM) et Nice (Lignes d'Azur) : temps réel via le relais Cloudflare (dossier relais/)
 - Île-de-France Mobilités (PRIM) : licences ODbL / Licence Mobilités / Etalab selon les jeux
 Les fichiers générés dans `horaires/` sont des bases dérivées de ces données.
 
