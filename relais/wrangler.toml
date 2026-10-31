@@ -1,4 +1,0 @@
-# Relais temps réel de Mon bus, déployé par Cloudflare Workers depuis ce dossier (relais/)
-name = "mon-bus-relais"
-main = "src/index.js"
-compatibility_date = "2026-10-01"
