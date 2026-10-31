@@ -27,6 +27,7 @@
   .arret { background:#fff; border-radius:14px; padding:14px 16px; margin-top:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
   .arret h2 { margin:0 0 8px; font-size:16px; }
   .ligne { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #eee; }
+  .separation { height:18px; }
   .num { min-width:52px; text-align:center; font-weight:800; font-size:17px; color:#fff; background:var(--texte); border-radius:8px; padding:3px 6px; line-height:1.1; }
   .num small { display:block; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.3px; opacity:.9; }
   .sens { flex:1; font-size:15px; }
@@ -152,7 +153,9 @@ function analyser(question) {
     else if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push("*:" + m);
     else if (!VIDES.has(m)) arret.push(m);
   }
-  return { lignes, arret };
+  const recolle = recoller(arret);
+  recolle.direction = recoller(arret.direction);
+  return { lignes, arret: recolle };
 }
 
 // Une ligne affichée correspond-elle au filtre "MODE:CODE" ?
@@ -176,6 +179,12 @@ const BOUCLES = {
     A: "PDP004 LBM001 RLE001 ISL002 LFU002 COR002 LCB001 CHQ002 SAC002 NAT003 REP005 ARJ003 RTA001 RUW001 ARA003 PRR003 FBG004 RDL001 TIM003 GEY001 LCI001 ARB001 GID001 CAL002 LBE002 CAV002 TSS002 SIM002".split(" "),
     B: "PDP012 SIM003 TSS001 CAV001 LBE001 CAL001 GID002 ARB002 LCI002 GEY002 TIM004 RDL002 FBG005 PRR002 ARA004 RUW002 RTA002 ARJ005 REP003 NAT004 SAC001 CHQ001 LCB003 COR001 LFU001 ISL001 RLE002 LBM002".split(" "),
     sens: { A: "Cormontaigne › CHU › Porte des Postes", B: "CHU › Cormontaigne › Porte des Postes" }
+  },
+  // Citadine C3 : boucle depuis Tourcoing Centre (A par Neuville d'abord, B par le C.H. Dron d'abord, comme dans l'appli Ilevia)
+  C3: {
+    A: "PLR031 ICT001 CAI001 AUB001 LEF001 PDF001 EMI001 ANO001 TWA004 TWA008 LUR001 RAC001 RSR002 PMN001 PRF001 NSC002 NEU001 FDE001 NRE001 SCA001 CNE002 ODO001 DRO002 BOU001 JUI001 MRI001 MIR001 TRE001 CRO001 OJT001 JAC001 VIR001 RXA001 TIL001 TGA005 TPO001 ADR003".split(" "),
+    B: "PLR003 ADR002 TPO002 TGA002 TIL002 RXA002 VIR002 JAC002 OJT002 CRO002 TRE002 MIR002 MRI002 JUI002 BOU002 DRO001 ODO002 CNE001 SCA002 NRE002 FDE002 NEU002 NSC001 PRF002 PMN002 TCC001 RAC002 LUR002 TWA009 TWA007 ANO002 EMI002 PDF002 LEF002 AUB002 CAI002 ICT078".split(" "),
+    sens: { A: "Neuville › CH Dron › Tourcoing Centre", B: "CH Dron › Neuville › Tourcoing Centre" }
   }
 };
 function preciserBoucle(p) {
@@ -304,7 +313,18 @@ function choisirVille(v) {
 $("gps").onclick = () => autourDeMoi();
 
 // Un nom d'arrêt « colle » à la question si tous ses mots utiles (hors le, de, la…) y sont
-const motsUtiles = nom => nom.split(" ").filter(m => !VIDES.has(m));
+// « C H DRON » (C.H. Dron) = « CH DRON » : on recolle les lettres seules qui se suivent (sauf A, D, L… qui sont des mots vides)
+function recoller(mots) {
+  const seule = x => /^[A-Z]$/.test(x) && !VIDES.has(x);
+  const res = [];
+  let enCours = false;   // le dernier mot gardé est fait de lettres seules
+  for (const m of mots) {
+    if (seule(m) && enCours) res[res.length - 1] += m;
+    else { res.push(m); enCours = seule(m); }
+  }
+  return res;
+}
+const motsUtiles = nom => recoller(nom.split(" ")).filter(m => !VIDES.has(m));
 // Deux mots « pareils » malgré une faute de frappe ou un pluriel (FLANDRE / FLANDRES, REPUBLIQE / REPUBLIQUE)
 const ABREV = { ST: "SAINT", STE: "SAINTE", GL: "GENERAL", PL: "PLACE", AV: "AVENUE", BD: "BOULEVARD" };
 function proche(a, b) {
@@ -338,6 +358,7 @@ function meilleurNom(noms, arret) {
   };
   let best = null, bs = null;
   for (const n of noms) {
+    if (NOMS_ECARTES.has(n)) continue;
     const sc = score(n);
     if (!sc.m) continue;
     // ordre de préférence : nom complet > mots de la question retrouvés > part du nom retrouvée > nom le plus précis
@@ -348,8 +369,10 @@ function meilleurNom(noms, arret) {
     const mieux = cmp > 0;
     if (mieux) { best = n; bs = sc; }
   }
-  return best;
+  return (DERNIER_NOM = best);
 }
+// « C3 Dron » : si l'arrêt choisi n'a pas la ligne demandée (Gustave Dron), on écarte ce nom et on réessaie
+let NOMS_ECARTES = new Set(), DERNIER_NOM = null;
 
 // Libellé d'une direction prévue : le sens temps réel qui lui ressemble le plus (sinon la direction elle-même)
 function libelleur(items) {
@@ -381,9 +404,24 @@ async function chercher(question, opts = {}) {
     if (!opts.force) $("proches").innerHTML = "";   // les boutons d'arrêts restent seulement si on choisit parmi eux
   }
   let r;
-  try { r = VILLE === "PARIS" ? await chercherParis(arret, opts.force, lignes) : VILLE === "LILLE" ? await chercherLille(arret, opts.force)
-                                                                       : await chercherGtfs(villeActuelle(), arret, opts.force); }
-  catch (e) { if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
+  try {
+    if (VILLE === "PARIS") r = await chercherParis(arret, opts.force, lignes);
+    else {
+      NOMS_ECARTES = new Set();
+      let premier = null;
+      for (let essai = 0; essai < 3; essai++) {
+        DERNIER_NOM = null;
+        r = VILLE === "LILLE" ? await chercherLille(arret, opts.force) : await chercherGtfs(villeActuelle(), arret, opts.force);
+        premier ??= r;
+        if (!r || opts.force || !lignes.length || !DERNIER_NOM || r.items.some(it => lignes.some(f => correspond(it, f)))) break;
+        NOMS_ECARTES.add(DERNIER_NOM);
+        r = null;
+      }
+      r ??= premier;
+      NOMS_ECARTES = new Set();
+    }
+  }
+  catch (e) { NOMS_ECARTES = new Set(); if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
   DERNIERE = { question, force: opts.force, ville: VILLE };
   if (CHOIX_SECTEURS && !opts.silencieux) {
@@ -404,8 +442,10 @@ async function chercher(question, opts = {}) {
   let liste = r.items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
   if (lignes.length) liste = liste.filter(it => lignes.some(f => correspond(it, f)));
   // mots de la phrase qui ne sont pas le nom de l'arrêt (fautes tolérées) -> direction éventuelle
-  const restants = arret.filter(m => !normaliser(r.nom).split(" ").some(w => proche(w, m)));
-  const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
+  const restants = arret.filter(m => !recoller(normaliser(r.nom).split(" ")).some(w => proche(w, m)));
+  // Le temps réel de Lille raccourcit certains terminus : « Roubaix Eurotéléport » devient « Eurotéléport »
+  const voulus = restants.flatMap(m => [m, ...(VILLE === "LILLE" && m === "ROUBAIX" ? ["EUROTELEPORT"] : [])]);
+  const avecSens = liste.filter(it => recoller(normaliser(it.sens).split(" ")).some(m => voulus.includes(m)));
   if (avecSens.length) liste = avecSens;
   // « Même recherche » = même arrêt + mêmes lignes + même direction, quelle que soit l'écriture (Flandre / Flandres…)
   opts.cle = [normaliser(r.nom), [...lignes].sort().join(","), restants.join(" ")].join("|");
@@ -830,12 +870,18 @@ function afficher(r, liste, question, opts) {
     }
     if (choix.length) lignesAff.push([cle, choix]);
   }
-  lignesAff.sort((a, b) => a[1][0].h - b[1][0].h);
+  // Ordre d'affichage : trains, TER, RER, tram, métro, bus, navettes ; puis lignes dans l'ordre (1, 2, 10, A, B…), puis directions
+  lignesAff.sort((a, b) => rangMode(a[1][0]) - rangMode(b[1][0])
+    || String(a[1][0].code ?? a[1][0].ligne).localeCompare(String(b[1][0].code ?? b[1][0].ligne), "fr", { numeric: true })
+    || a[0].split("|")[2].localeCompare(b[0].split("|")[2], "fr"));
 
   let html = `<div class="arret"><h2>${titre(arret)}</h2>`;
+  let rangPrecedent = null;
   for (const [cle, choix] of lignesAff) {
     const sens = cle.split("|")[2];
     const [premier, ...suivants] = choix;
+    if (rangPrecedent !== null && rangMode(premier) !== rangPrecedent) html += `<div class="separation"></div>`;
+    rangPrecedent = rangMode(premier);
     const style = premier.couleur ? ` style="background:#${premier.couleur};color:#${premier.texte || "FFFFFF"}"` : "";
     html += `<div class="ligne"><span class="num"${style}><small>${premier.nomMode || ""}</small>${premier.code ?? premier.ligne}</span><span class="sens">→ ${titre(sens)}</span>
              <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
@@ -851,6 +897,14 @@ function afficher(r, liste, question, opts) {
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
   if (opts.voix) parler(arret, lignesAff);
   afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[1]));
+}
+
+// Rang d'un type de transport à l'affichage : 0 trains (Transilien…), 1 TER, 2 RER, 3 tram, 4 métro, 5 bus, 6 navettes
+function rangMode(it) {
+  const nom = normaliser(it.nomMode || "");
+  if (/NAVETTE|BATEAU|TELEPHERIQUE|FUNICULAIRE/.test(nom)) return 6;
+  if (it.mode === "TRAIN") return nom.includes("TER") ? 1 : 0;
+  return { RER: 2, TRAM: 3, METRO: 4, BUS: 5 }[it.mode] ?? 5;
 }
 
 const hhmm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });

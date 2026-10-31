@@ -8,7 +8,8 @@ const BASE = process.argv[2] || "http://localhost:8765/";
 
 const QUESTIONS = {
   LILLE: ["14 République Beaux-Arts direction Marais", "C1 Wagner", "CO1 République Beaux-Arts", "métro 1 Gare Lille Flandres",
-          "Gare Lille Flandre", "tram Gare Lille Europe", "tram R Gare Lille Europe", "tram T Gare Lille Europe", "métro 2 Gare Lille Europe"],
+          "Gare Lille Flandre", "tram Gare Lille Europe", "tram R Gare Lille Europe", "tram T Gare Lille Europe", "métro 2 Gare Lille Europe",
+          "C3 Victoire", "C3 CH Dron", "C3 Dron", "CH Dron", "tram Gare Lille Flandres direction Roubaix", "métro 2 Gare Lille Flandres direction CH Dron"],
   PARIS: ["RER A Châtelet", "RER B Gare du Nord", "métro 4 Gare du Nord", "métro 14 Gare de Lyon", "tram T3a Porte de Vincennes"],
   BORDEAUX: ["tram C Quinconces", "tram B Hôtel de Ville direction Pessac"],
   RENNES: ["métro a République", "bus C1 République"],
