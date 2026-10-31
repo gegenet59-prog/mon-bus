@@ -380,9 +380,12 @@ async function chercher(question, opts = {}) {
   const maintenant = new Date();
   let liste = r.items.filter(it => it.h >= new Date(maintenant.getTime() - 60000));
   if (lignes.length) liste = liste.filter(it => lignes.some(f => correspond(it, f)));
-  const restants = arret.filter(m => !normaliser(r.nom).split(" ").includes(m));
+  // mots de la phrase qui ne sont pas le nom de l'arrêt (fautes tolérées) -> direction éventuelle
+  const restants = arret.filter(m => !normaliser(r.nom).split(" ").some(w => proche(w, m)));
   const avecSens = liste.filter(it => it.sens.split(" ").some(m => restants.includes(m)));
   if (avecSens.length) liste = avecSens;
+  // « Même recherche » = même arrêt + mêmes lignes + même direction, quelle que soit l'écriture (Flandre / Flandres…)
+  opts.cle = [normaliser(r.nom), [...lignes].sort().join(","), restants.join(" ")].join("|");
   afficher(r, liste, question, opts);
 }
 
@@ -764,7 +767,7 @@ async function chargerZoneParis(zone, nom, num) {
 function afficher(r, liste, question, opts) {
   const arret = r.titre, maintenant = new Date();
   if (!liste.length) { $("statut").textContent = "Aucun passage trouvé. Vérifie le nom de l'arrêt ou la ligne."; return; }
-  if (!opts.silencieux) memoriser(question);
+  if (!opts.silencieux) memoriser(question, opts.cle);
   $("statut").textContent = `Mis à jour à ${hhmm(maintenant)}` + (opts.silencieux ? " · auto" : "")
     + (r.tempsReelOk ? "" : " · temps réel indisponible, horaires prévus seulement");
 
@@ -826,8 +829,18 @@ const titre = s => s.toLowerCase().replace(/(?<=^|[\s(])\S/g, c => c.toUpperCase
 const cleListe = nom => (nom === "recents" && VILLE === "LILLE") ? "recents" : `${nom}_${VILLE}`;
 function lireListe(nom) { try { return JSON.parse(localStorage.getItem(cleListe(nom)) || "[]"); } catch { return []; } }
 function ecrireListe(nom, l) { try { localStorage.setItem(cleListe(nom), JSON.stringify(l)); } catch {} }
-function memoriser(q) {
-  ecrireListe("recents", [q, ...lireListe("recents").filter(x => normaliser(x) !== normaliser(q))].slice(0, 5));
+// Une question récente = { q: texte tapé ou dit, k: clé de la recherche }. Les anciennes (texte seul) sont gardées.
+const texteRecent = x => (typeof x === "string" ? x : x.q);
+function memeRecherche(x, cle) {
+  if (typeof x !== "string") return x.k === cle;
+  // ancienne entrée sans clé : on la compare en relisant sa phrase
+  const [nom, lignesCle] = cle.split("|");
+  const { lignes, arret } = analyser(x);
+  return [...lignes].sort().join(",") === lignesCle && motsUtiles(nom).every(w => arret.some(a => proche(w, a)));
+}
+function memoriser(q, cle) {
+  const garder = lireListe("recents").filter(x => cle ? !memeRecherche(x, cle) : normaliser(texteRecent(x)) !== normaliser(q));
+  ecrireListe("recents", [cle ? { q, k: cle } : q, ...garder].slice(0, 5));
   montrerRecents();
 }
 function basculerFavori(q) {
@@ -849,7 +862,7 @@ function montrerRecents() {
   // Récents (hors favoris)
   $("recents").innerHTML = "";
   const favs = lireListe("favoris");
-  for (const q of lireListe("recents").filter(x => !favs.includes(x))) {
+  for (const q of lireListe("recents").map(texteRecent).filter(x => !favs.includes(x))) {
     const b = document.createElement("button");
     b.textContent = q;
     b.onclick = () => { $("question").value = q; chercher(q); };
