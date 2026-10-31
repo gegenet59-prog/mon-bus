@@ -34,7 +34,8 @@ export default {
       const maintenant = new Date().toISOString();
       const corps = `<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sw="http://wsdl.siri.org.uk" xmlns:siri="http://www.siri.org.uk/siri"><S:Body><sw:${type}><Request><siri:RequestTimestamp>${maintenant}</siri:RequestTimestamp><siri:RequestorRef>open-data</siri:RequestorRef><siri:MessageIdentifier>monbus-${Date.now()}</siri:MessageIdentifier></Request><RequestExtension/></sw:${type}></S:Body></S:Envelope>`;
       try {
-        const r = await fetch("https://siri.lametropolemobilite.fr/RTM", { method: "POST", body: corps, headers: { "Content-Type": "text/xml; charset=utf-8" } });
+        const cible = (url.searchParams.get("http") ? "http://" : "https://") + "siri.lametropolemobilite.fr/" + (url.searchParams.get("reseau") || "RTM");
+        const r = await fetch(cible, { method: "POST", body: corps, headers: { "Content-Type": "text/xml; charset=utf-8" } });
         const texte = await r.text();
         return new Response(`HTTP ${r.status}\n\n${texte.slice(0, 20000)}`, { headers: { ...ENTETES_CORS, "Content-Type": "text/plain; charset=utf-8" } });
       } catch (e) {
