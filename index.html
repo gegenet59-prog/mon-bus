@@ -106,7 +106,7 @@ const CHIFFRES = { UN:"1", DEUX:"2", TROIS:"3", QUATRE:"4", CINQ:"5", SIX:"6", S
 
 function normaliser(t) {
   return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase()
-          .replace(/[-'’.,?!]/g, " ").replace(/\s+/g, " ").trim();
+          .replace(/[-'’.,?!()/]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 // Sépare la question en lignes (14, CO1, L1...) et en nom d'arrêt
@@ -143,7 +143,7 @@ function analyser(question) {
   }
   const lignes = [], arret = [];
   arret.direction = []; // mots placés après « direction » / « vers » : sens voulu, pas le nom de l'arrêt
-  let versLeSens = false;
+  let versLeSens = false, precedent = "";
   for (const m of res) {
     if (m === "DIRECTION" || m === "VERS") { versLeSens = true; continue; }
     if (m.startsWith("§")) { arret.direction.push(m.slice(1)); arret.push(m.slice(1)); continue; }
@@ -151,7 +151,8 @@ function analyser(question) {
     if (m.startsWith("#")) lignes.push(m.slice(1));
     else if (/^M\d{1,2}$/.test(m)) lignes.push("METRO:" + m.slice(1));
     else if (/^\d{1,3}$/.test(m) || /^[A-Z]{1,4}\d{1,3}[AB]?$/.test(m)) lignes.push("*:" + m);
-    else if (!VIDES.has(m)) arret.push(m);
+    else if (!VIDES.has(m) || (m === "EST" && precedent === "L")) arret.push(m);   // « Gare de l'Est »
+    precedent = m;
   }
   const recolle = recoller(arret);
   recolle.direction = recoller(arret.direction);
@@ -324,7 +325,7 @@ function recoller(mots) {
   }
   return res;
 }
-const motsUtiles = nom => recoller(nom.split(" ")).filter(m => !VIDES.has(m));
+const motsUtiles = nom => recoller(nom.split(" ")).filter((m, i, a) => !VIDES.has(m) || (m === "EST" && a[i - 1] === "L"));
 // Deux mots « pareils » malgré une faute de frappe ou un pluriel (FLANDRE / FLANDRES, REPUBLIQE / REPUBLIQUE)
 const ABREV = { ST: "SAINT", STE: "SAINTE", GL: "GENERAL", PL: "PLACE", AV: "AVENUE", BD: "BOULEVARD" };
 function proche(a, b) {
@@ -427,7 +428,7 @@ async function chercher(question, opts = {}) {
   }
   catch (e) { NOMS_ECARTES = new Set(); if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
-  DERNIERE = { question, force: opts.force, ville: VILLE };
+  DERNIERE = { question, force: opts.force, ville: VILLE, t: opts.silencieux && DERNIERE ? DERNIERE.t : Date.now() };
   if (CHOIX_SECTEURS && !opts.silencieux) {
     const { nom, secteurs } = CHOIX_SECTEURS;
     $("proches").innerHTML = "";
@@ -759,13 +760,29 @@ async function chercherGtfs(conf, arret, force) {
 // Clé PRIM gratuite (compte de Nice). Elle est visible ici : si elle est abusée, en régénérer une sur PRIM.
 const PRIM = "https://prim.iledefrance-mobilites.fr/marketplace";
 const CLE_PRIM = "4nXb9R6YGCqMyntuh0GmKY3U8xtlSk27";
+// Quota PRIM : 1 000 appels/jour par API, partagés entre tous les utilisateurs. On économise :
+// arrêts et lignes lus dans des fichiers préparés la nuit, prévu gardé 10 min, temps réel seul à l'actualisation.
+let QUOTA_ATTEINT = false;
 const prim = async chemin => {
   const r = await fetch(PRIM + chemin, { headers: { apikey: CLE_PRIM } });
+  if (r.status === 429) QUOTA_ATTEINT = true;
   if (!r.ok) throw new Error("PRIM " + r.status);
   return r.json();
 };
 const LIGNES_IDFM = {}; // C01371 -> { code, couleur, texte }
-async function infoLigne(id) {
+let LIGNES_PARIS_CHARGEES = false, LIGNES_PARIS_OK = false;
+async function infoLigne(id, trainLong) {
+  if (!LIGNES_PARIS_CHARGEES) {
+    LIGNES_PARIS_CHARGEES = true;
+    try {
+      const toutes = await (await fetch("horaires/lignes_paris.json")).json();
+      for (const [num, [code, couleur, texte, nomMode, nomLigne]] of Object.entries(toutes))
+        LIGNES_IDFM[num] ??= { code, couleur, texte, nomMode, nomLigne };
+      LIGNES_PARIS_OK = true;
+    } catch {}
+  }
+  // Ligne absente de la liste de la nuit (souvent un grand train SNCF) : pas d'appel à l'API, on l'affiche comme « Train »
+  if (!LIGNES_IDFM[id] && LIGNES_PARIS_OK) LIGNES_IDFM[id] = trainLong ? { code: "", nomMode: "Train" } : { code: "", nomMode: "Bus" };
   if (!LIGNES_IDFM[id]) {
     try {
       const l = (await prim(`/v2/navitia/lines/line:IDFM:${id}`)).lines[0];
@@ -782,6 +799,9 @@ function habillerParis(it, nomMode = "", nomLigne = "") {
   // Bus de remplacement (travaux) : « Bus Remplacement RER D » -> badge « BUS RER » + D
   const remplacement = normaliser(nomLigne).match(/REMPLACEMENT (RER|TRANSILIEN|TRAM|METRO)/);
   if (remplacement) return { ...it, mode: "BUS", nomMode: "Bus " + { RER: "RER", TRANSILIEN: "Transilien", TRAM: "Tram", METRO: "Métro" }[remplacement[1]] };
+  // Téléphérique (Câble C1), funiculaire de Montmartre, Orlyval / CDG VAL : rangés en « navettes », en dernier
+  if (/CABLEWAY|TELEPHERIQUE|FUNICULAIRE|ORLYVAL|CDG VAL/.test(n))
+    return { ...it, mode: "NAVETTE", nomMode: n.includes("FUNICULAIRE") ? "Funiculaire" : /CABLE|TELEPH/.test(n) ? "Téléphérique" : "Navette" };
   const mode = n.includes("METRO") ? "METRO" : n === "RER" ? "RER" : n.includes("TRAM") ? "TRAM"
              : /TRANSILIEN|TER|TRAIN/.test(n) ? "TRAIN" : "BUS";
   const nom = { METRO: "Métro", RER: "RER", TRAM: "Tram", BUS: n.includes("NOCTILIEN") ? "Noctilien" : "Bus" }[mode]
@@ -796,40 +816,74 @@ async function chercherParis(arret, force, lignes = []) {
   if (force?.zone) return chargerZoneParis(force.zone, normaliser(force.zone.name), force.zone.id.split(":").pop());
   // « RER A Châtelet » : si l'arrêt le plus ressemblant n'a pas la ligne demandée (Châtelet métro),
   // on essaie les suivants (Châtelet - Les Halles), 3 au plus
-  const trouves = await trouverZonesParis(arret);
+  const zones = await trouverZonesParis(arret, lignes);
   let premier = null;
-  for (let essai = 0; essai < 3; essai++) {
-    const nom = meilleurNom(Object.keys(trouves), arret);
-    if (!nom) break;
-    const zone = trouves[nom];
+  for (const zone of zones.slice(0, 3)) {
     const r = await chargerZoneParis(zone, normaliser(zone.name), zone.id.split(":").pop());
     premier ??= r;
     if (!lignes.length || r.items.some(it => lignes.some(f => correspond(it, f)))) return r;
-    delete trouves[nom];
   }
   return premier;
 }
 
-// Arrêt parisien : on cherche la phrase entière puis chaque mot, et on garde le nom qui colle le mieux
-async function trouverZoneParis(arret) {
-  const trouves = await trouverZonesParis(arret);
-  const nom = meilleurNom(Object.keys(trouves), arret);
-  return nom ? trouves[nom] : null;
+// Arrêt parisien, cherché dans la liste préparée la nuit (sans appel à l'API) ; renvoie les meilleurs, dans l'ordre.
+// Ordre : nom complet retrouvé > mots de la question retrouvés > part du nom retrouvée > station ferrée (métro, RER…)
+// > à Paris > plus proche de toi (si position connue) > nom le plus court
+async function trouverZonesParis(arret, lignes = []) {
+  let liste = null;
+  try { ARRETS_PARIS ??= await (await fetch("horaires/arrets_paris.json")).json(); liste = ARRETS_PARIS; } catch {}
+  if (!liste?.length || liste[0].length < 5) return trouverZonesParisApi(arret);   // ancien fichier : on passe par l'API
+  const mots = arret.direction?.length && arret.some(m => !arret.direction.includes(m)) ? arret.filter(m => !arret.direction.includes(m)) : arret;
+  const nombres = lignes.filter(f => f.startsWith("*:")).map(f => f.slice(2));
+  // Surnoms courants : Roissy / CDG = aéroport, Disneyland = Marne-la-Vallée - Chessy, Arc de Triomphe = Étoile
+  let mots2 = [...mots];
+  if (mots2.includes("CDG") || (mots2.length === 1 && mots2[0] === "ROISSY")) mots2 = [...mots2.filter(m => m !== "ROISSY"), "AEROPORT", "CDG"];
+  if (mots2.some(m => m === "DISNEY" || m === "DISNEYLAND")) mots2 = ["MARNE", "VALLEE", "CHESSY"];
+  if (mots2.includes("ARC") && mots2.includes("TRIOMPHE")) mots2 = ["CHARLES", "GAULLE", "ETOILE"];
+  if (mots2.includes("ORLY") && mots2.every(m => ["ORLY", "AEROPORT", "TERMINAL", "TERMINAUX"].includes(m))) mots2 = [...new Set([...mots2, "AEROPORT"])];
+  return classerZonesParis(liste, mots2, nombres);
 }
-async function trouverZonesParis(arret) {
-  const requetes = [arret.join(" "), ...arret.filter(m => m.length >= 3)];
-  const trouves = {};
-  for (const res of await Promise.all(requetes.map(q =>
-      prim(`/v2/navitia/places?q=${encodeURIComponent(q)}&type%5B%5D=stop_area&count=8`).catch(() => ({}))))) {
-    for (const p of res.places || []) if (p.stop_area && !trouves[normaliser(p.stop_area.name)]) trouves[normaliser(p.stop_area.name)] = p.stop_area;
+function classerZonesParis(liste, mots, nombres) {
+  const cands = [];
+  for (const [num, label, la, lo, ferre] of liste) {
+    const nw = motsUtiles(normaliser(label.replace(/\s*\([^)]*\)\s*$/, "")));   // sans la commune finale, garde « (Terminal 4) »
+    // « Vélizy 2 », « 8 Mai 1945 » : un numéro pris pour une ligne compte aussi s'il est dans le nom
+    const m = nw.filter(w => mots.some(q => proche(w, q)) || nombres.includes(w)).length;
+    if (!nw.some(w => mots.some(q => proche(w, q)))) continue;
+    const exacts = [...mots, ...nombres].filter(q => nw.includes(q)).length;   // Bercy plutôt que Burcy
+    // les mots de la question absents du nom peuvent être la commune (« Mairie Montreuil »)
+    const commune = normaliser((label.match(/\(([^)]*)\)\s*$/) || [])[1] || "");
+    const horsNom = mots.filter(q => !nw.some(w => proche(w, q)));
+    const dansCommune = commune && horsNom.some(q => commune.split(" ").some(w => proche(w, q)));
+    const qm = mots.length - horsNom.length + (dansCommune ? 1 : 0);
+    cands.push({ num, label, la, lo, ferre, complet: m === nw.length ? 1 : 0, qm, exacts, part: m / nw.length, len: nw.length,
+                 paris: commune === "PARIS" ? 1 : 0, m: POSITION ? distance(POSITION[0], POSITION[1], la, lo) : 0 });
   }
-  return trouves;
+  // mots retrouvés > mots exacts > près de toi (< 1,5 km) > station ferrée > nom complet > part du nom > Paris > distance > court
+  const pres = c => POSITION && c.m < 1500 ? 1 : 0;
+  cands.sort((x, y) => (y.qm - x.qm) || (y.exacts - x.exacts) || (pres(y) - pres(x)) || (y.ferre - x.ferre) || (y.complet - x.complet)
+    || (y.part - x.part) || (y.paris - x.paris) || (x.m - y.m) || (x.len - y.len));
+  return cands.slice(0, 5).map(c => ({ id: `stop_area:IDFM:${c.num}`, name: c.label.replace(/\s*\([^)]*\)\s*$/, ""), label: c.label }));
+}
+// Secours si la liste de la nuit manque : recherche par l'API (coûte des appels)
+async function trouverZonesParisApi(arret) {
+  const trouves = {};
+  const res = await prim(`/v2/navitia/places?q=${encodeURIComponent(arret.join(" "))}&type%5B%5D=stop_area&count=8`).catch(() => ({}));
+  for (const p of res.places || []) if (p.stop_area && !trouves[normaliser(p.stop_area.name)]) trouves[normaliser(p.stop_area.name)] = p.stop_area;
+  const zones = [];
+  for (let i = 0; i < 3; i++) { const n = meilleurNom(Object.keys(trouves), arret); if (!n) break; zones.push(trouves[n]); delete trouves[n]; }
+  return zones;
 }
 
+const PREVU_PARIS = {};
 async function chargerZoneParis(zone, nom, num) {
   // Prévu (Navitia) et temps réel (SIRI) en parallèle
+  // Le prévu est gardé 10 min (l'actualisation automatique ne redemande que le temps réel)
+  const cache = PREVU_PARIS[zone.id];
   const [dep, sm] = await Promise.all([
-    prim(`/v2/navitia/stop_areas/${zone.id}/departures?count=150&data_freshness=base_schedule`).catch(() => ({ departures: [] })),
+    cache && Date.now() - cache.t < 600000 ? cache.dep
+      : prim(`/v2/navitia/stop_areas/${zone.id}/departures?count=150&data_freshness=base_schedule`)
+          .then(dep => (PREVU_PARIS[zone.id] = { t: Date.now(), dep }).dep).catch(() => ({ departures: [] })),
     prim(`/stop-monitoring?MonitoringRef=${encodeURIComponent(`STIF:StopArea:SP:${num}:`)}`).catch(() => null)
   ]);
   const items = [];
@@ -845,8 +899,8 @@ async function chargerZoneParis(zone, nom, num) {
     const id = (j.LineRef?.value || "").split(":").filter(Boolean).pop();
     const dest = j.DestinationName?.[0]?.value || j.DirectionName?.[0]?.value || "";
     if (!t || !id) continue;
-    const info = await infoLigne(id);
-    items.push(habillerParis({ ligne: (info.code || id).toUpperCase(), code: info.code || id, sens: normaliser(dest), h: new Date(t), prevu: false,
+    const info = await infoLigne(id, (j.VehicleFeatureRef || []).includes("longTrain"));
+    items.push(habillerParis({ ligne: (info.code || id).toUpperCase(), code: info.code ?? id, sens: normaliser(dest), h: new Date(t), prevu: false,
                                couleur: info.couleur, texte: info.texte }, info.nomMode, info.nomLigne));
   }
   const libelle = libelleur(items);
@@ -866,7 +920,8 @@ function afficher(r, liste, question, opts) {
   if (!liste.length) { $("statut").textContent = "Aucun passage trouvé. Vérifie le nom de l'arrêt ou la ligne."; return; }
   if (!opts.silencieux) memoriser(question, opts.cle);
   $("statut").textContent = `Mis à jour à ${hhmm(maintenant)}` + (opts.silencieux ? " · auto" : "")
-    + (r.tempsReelOk ? "" : " · temps réel indisponible, horaires prévus seulement");
+    + (r.tempsReelOk ? "" : " · temps réel indisponible, horaires prévus seulement")
+    + (VILLE === "PARIS" && QUOTA_ATTEINT ? " · limite d'appels du jour atteinte chez Île-de-France Mobilités" : "");
 
   const groupes = {};
   for (const it of liste) (groupes[it.mode + "|" + it.ligne + "|" + it.sens] ??= []).push(it);
@@ -907,7 +962,7 @@ function afficher(r, liste, question, opts) {
   if (VILLE === "LILLE" && lignesAff.some(([, c]) => c[0].mode === "TRAIN"))
     html += `<p class="aide">🎫 Les tickets Ilevia sont valables dans le TER pour voyager entre deux gares de la métropole.
              <a href="https://www.ter.sncf.com/hauts-de-france/tarifs-cartes/autres-tarifs-ter/tarifs-transports-en-commun/voyager-en-ter-aux-tarifs-ilevia">Conditions sur ter.sncf.com</a></p>`;
-  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : VILLE === "LILLE" ? "Ilevia / SNCF" : villeActuelle().source || ""} · mise à jour auto toutes les 30 s</p>`;
+  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : VILLE === "LILLE" ? "Ilevia / SNCF" : villeActuelle().source || ""} · mise à jour auto ${VILLE === "PARIS" ? "chaque minute pendant 10 min" : "toutes les 30 s"}</p>`;
   $("resultats").innerHTML = html;
   $("btnFavori").onclick = () => { basculerFavori(question); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
@@ -933,7 +988,8 @@ function quand(p, maintenant, petit) {
   return p.prevu ? `<span class="prevu">${txt} <i>prévu</i></span>` : `${txt}${petit ? "" : " 📡"}`;
 }
 
-const titre = s => s.toLowerCase().replace(/(?<=^|[\s(])\S/g, c => c.toUpperCase());
+// Majuscules en début de mot ; un nom déjà bien écrit (« Gare de l'Est ») est gardé tel quel
+const titre = s => /[a-zà-ÿ]/.test(s) ? s : s.toLowerCase().replace(/(?<=^|[\s(])\S/g, c => c.toUpperCase());
 
 // Questions récentes (gardées sur ce téléphone)
 // Listes gardées sur ce téléphone, séparées par ville (« recents » sans suffixe = Lille, pour garder l'historique)
@@ -1039,9 +1095,13 @@ async function afficherPerturbations(r, lignes) {
 }
 
 // ===================== Mise à jour automatique (toutes les 30 s) =====================
+// Paris : toutes les 60 s et pendant 10 min seulement après la recherche (quota PRIM)
+let TOURS = 0;
 setInterval(() => {
-  if (DERNIERE && DERNIERE.ville === VILLE && document.visibilityState === "visible" && $("resultats").innerHTML)
-    chercher(DERNIERE.question, { force: DERNIERE.force, silencieux: true });
+  TOURS++;
+  if (!DERNIERE || DERNIERE.ville !== VILLE || document.visibilityState !== "visible" || !$("resultats").innerHTML) return;
+  if (VILLE === "PARIS" && (TOURS % 2 || Date.now() - DERNIERE.t > 600000)) return;
+  chercher(DERNIERE.question, { force: DERNIERE.force, silencieux: true });
 }, 30000);
 
 // ===================== Autour de moi =====================

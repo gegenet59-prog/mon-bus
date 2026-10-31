@@ -54,8 +54,19 @@ jobs:
       - name: Horaires de Montpellier (TaM)
         run: python3 scripts/build_ville.py MONTPELLIER "https://gtfsproxy.e-tam.fr/COMMON/GTFS.zip"
         continue-on-error: true
-      - name: Liste des arrêts d'Île-de-France (Autour de moi, mode PARIS)
-        run: python3 scripts/build_arrets_paris.py
+      - name: Arrêts et lignes d'Île-de-France (mode PARIS)
+        # Le quota PRIM est de 1 000 appels/jour : on régénère seulement la nuit (ou à la main),
+        # et à chaque modification du site on reprend les fichiers déjà publiés
+        run: |
+          SITE="https://gegenet59-prog.github.io/mon-bus/horaires"
+          if [ "${{ github.event_name }}" = "push" ] \
+             && curl -sfL -o horaires/arrets_paris.json "$SITE/arrets_paris.json" \
+             && curl -sfL -o horaires/lignes_paris.json "$SITE/lignes_paris.json" \
+             && python3 -c "import json,sys; a=json.load(open('horaires/arrets_paris.json')); sys.exit(0 if len(a[0])==5 else 1)"; then
+            echo "Fichiers Paris repris du site publié"
+          else
+            python3 scripts/build_arrets_paris.py
+          fi
         continue-on-error: true
       - uses: actions/upload-pages-artifact@v3
         with:
