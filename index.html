@@ -397,7 +397,9 @@ let DERNIERE = null;
 async function chercher(question, opts = {}) {
   question = question.trim();
   if (!question) return;
-  const { lignes, arret } = analyser(question);
+  let { lignes, arret } = analyser(question);
+  // « 4 Cantons » : le 4 fait partie du nom de l'arrêt, ce n'est pas la ligne 4
+  const sansNumeroDuNom = r => r?.nom ? lignes.filter(f => !(f.startsWith("*:") && normaliser(r.nom).split(" ").includes(f.slice(2)))) : lignes;
   if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. " + (EXEMPLES[VILLE] || ""); return; }
   if (!opts.silencieux) {
     $("statut").textContent = "Recherche…"; $("resultats").innerHTML = "";
@@ -413,13 +415,15 @@ async function chercher(question, opts = {}) {
         DERNIER_NOM = null;
         r = VILLE === "LILLE" ? await chercherLille(arret, opts.force) : await chercherGtfs(villeActuelle(), arret, opts.force);
         premier ??= r;
-        if (!r || opts.force || !lignes.length || !DERNIER_NOM || r.items.some(it => lignes.some(f => correspond(it, f)))) break;
+        const l = sansNumeroDuNom(r);
+        if (!r || opts.force || !l.length || !DERNIER_NOM || r.items.some(it => l.some(f => correspond(it, f)))) break;
         NOMS_ECARTES.add(DERNIER_NOM);
         r = null;
       }
       r ??= premier;
       NOMS_ECARTES = new Set();
     }
+    lignes = sansNumeroDuNom(r);
   }
   catch (e) { NOMS_ECARTES = new Set(); if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
@@ -467,7 +471,19 @@ async function chercherLille(arret, force) {
   const nom = force?.nom || meilleurNom([...Object.keys(index), ...Object.keys(nomsGares)], arret) || arret.join(" ");
   let tempsReel = [], tempsReelOk = true;
   // Arrêt précis (Autour de moi) ou tous les arrêts de ce nom (ex. Wagner à Lille ET à Wattrelos)
-  const ids = force?.id ? [force.id] : (index[nom] || []);
+  const ids = force?.id ? [force.id] : [...(index[nom] || [])];
+  // Comme Ilevia, on réunit les arrêts voisins au nom proche : « 4 Cantons Stade » (bus) + « 4 Cantons Stade Pierre Mauroy » (métro)
+  try {
+    ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json();
+    const ici = ARRETS_LILLE.filter(a => ids.includes(a[0]));
+    const motsDe = s => normaliser(s).split(" ");
+    for (const [id, n2, , a, b] of ARRETS_LILLE) {
+      if (ids.includes(id)) continue;
+      const proche250 = ici.some(x => distance(x[3], x[4], a, b) < 250);
+      const m1 = motsDe(nom), m2 = motsDe(n2);
+      if (proche250 && m2.length >= 2 && (m2.every(w => m1.includes(w)) || m1.every(w => m2.includes(w)))) ids.push(id);
+    }
+  } catch {}
   const fichiers = (await Promise.all(ids.map(id => chargerCompact("lille", id)))).filter(Boolean);
   // codes de quais (pour le temps réel Ilevia) et type/couleurs des lignes, lus dans les fichiers de l'arrêt
   const quais = [...new Set(fichiers.flatMap(f => f.q))];
