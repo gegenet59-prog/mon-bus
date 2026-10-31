@@ -27,3 +27,5 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 ## Tests
 
 `node tests/tester_villes.js [adresse]` : pose une série de questions à chaque ville (arrêt trouvé, directions, doublons, homonymes). En local, générer `horaires/` puis lancer `python3 -m http.server 8765`. La nuit, beaucoup de lignes ne roulent pas.
+
+`node tests/verifier_stations_paris.js` : vérifie les 996 stations ferrées d'Île-de-France et le badge des 2 029 lignes, sans consommer de quota PRIM.
