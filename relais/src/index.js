@@ -28,6 +28,19 @@ export default {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" },
       });
     }
+    // RTM Marseille (SIRI, requêtes SOAP) : test d'accès
+    if (nom === "rtm-test") {
+      const type = url.searchParams.get("req") === "lignes" ? "LinesDiscovery" : "CheckStatus";
+      const maintenant = new Date().toISOString();
+      const corps = `<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sw="http://wsdl.siri.org.uk" xmlns:siri="http://www.siri.org.uk/siri"><S:Body><sw:${type}><Request><siri:RequestTimestamp>${maintenant}</siri:RequestTimestamp><siri:RequestorRef>open-data</siri:RequestorRef><siri:MessageIdentifier>monbus-${Date.now()}</siri:MessageIdentifier></Request><RequestExtension/></sw:${type}></S:Body></S:Envelope>`;
+      try {
+        const r = await fetch("https://siri.lametropolemobilite.fr/RTM", { method: "POST", body: corps, headers: { "Content-Type": "text/xml; charset=utf-8" } });
+        const texte = await r.text();
+        return new Response(`HTTP ${r.status}\n\n${texte.slice(0, 20000)}`, { headers: { ...ENTETES_CORS, "Content-Type": "text/plain; charset=utf-8" } });
+      } catch (e) {
+        return new Response("Erreur : " + e.message, { status: 502, headers: ENTETES_CORS });
+      }
+    }
     const source = FLUX[nom];
     if (!source) return new Response("Flux inconnu", { status: 404, headers: ENTETES_CORS });
 
