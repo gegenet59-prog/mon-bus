@@ -51,6 +51,9 @@ jobs:
       - name: Grenoble (M réso)
         run: python3 scripts/build_ville.py GRENOBLE "https://data.mobilites-m.fr/api/gtfs/SEM"
         continue-on-error: true
+      - name: Horaires de Montpellier (TaM)
+        run: python3 scripts/build_ville.py MONTPELLIER "https://gtfsproxy.e-tam.fr/COMMON/GTFS.zip"
+        continue-on-error: true
       - name: Liste des arrêts d'Île-de-France (Autour de moi, mode PARIS)
         run: python3 scripts/build_arrets_paris.py
         continue-on-error: true
