@@ -84,7 +84,8 @@
   <div id="resultats"></div>
   <p class="aide sources">Données : <a href="https://data.lillemetropole.fr">Ilevia / Métropole Européenne de Lille</a> ·
     <a href="https://transport.data.gouv.fr/datasets/horaires-sncf">SNCF Voyageurs</a> (ODbL) ·
-    <a href="https://prim.iledefrance-mobilites.fr">Île-de-France Mobilités – PRIM</a>.
+    <a href="https://prim.iledefrance-mobilites.fr">Île-de-France Mobilités – PRIM</a> ·
+    <a href="https://transport.data.gouv.fr">TBM, STAR via transport.data.gouv.fr</a>.
     Horaires mis à jour chaque nuit, temps réel en direct.</p>
 </main>
 <script>
@@ -213,11 +214,15 @@ const VILLES = [
   { id: "LYON", nom: "Lyon", centre: [45.76, 4.84] },
   { id: "MARSEILLE", nom: "Marseille", centre: [43.30, 5.37] },
   { id: "TOULOUSE", nom: "Toulouse", centre: [43.60, 1.44] },
-  { id: "BORDEAUX", nom: "Bordeaux", centre: [44.84, -0.58] },
+  { id: "BORDEAUX", nom: "Bordeaux", centre: [44.84, -0.58], dispo: true, gtfs: "bordeaux", source: "TBM",
+    rt: "https://bdx.mecatran.com/utw/ws/gtfsfeed/realtime/bordeaux?apiKey=opendata-bordeaux-metropole-flux-gtfs-rt",
+    exemple: "tram Quinconces" },
   { id: "NANTES", nom: "Nantes", centre: [47.22, -1.55] },
   { id: "STRASBOURG", nom: "Strasbourg", centre: [48.58, 7.75] },
   { id: "MONTPELLIER", nom: "Montpellier", centre: [43.61, 3.88] },
-  { id: "RENNES", nom: "Rennes", centre: [48.11, -1.68] },
+  { id: "RENNES", nom: "Rennes", centre: [48.11, -1.68], dispo: true, gtfs: "rennes", source: "STAR",
+    rt: "https://proxy.transport.data.gouv.fr/resource/star-rennes-integration-gtfs-rt-trip-update",
+    exemple: "métro République" },
   { id: "NICE", nom: "Nice", centre: [43.70, 7.27] },
   { id: "GRENOBLE", nom: "Grenoble", centre: [45.19, 5.72] },
   { id: "SAINT-ETIENNE", nom: "Saint-Étienne", centre: [45.44, 4.39] },
@@ -254,12 +259,14 @@ const AIDES = {
   PARIS: "Dis les lignes puis l'arrêt : « métro 4 et RER A à Châtelet ». Sans ligne, tout s'affiche."
 };
 const EXEMPLES = { LILLE: "ex : 14 C1 République Beaux-Arts", PARIS: "ex : métro 4 RER A Châtelet" };
+const villeActuelle = () => VILLES.find(v => v.id === VILLE) || {};
 function choisirVille(v) {
   VILLE = v;
   try { localStorage.setItem("ville", v); } catch {}
   construireBarre();
-  $("aideVille").textContent = AIDES[v];
-  $("question").placeholder = EXEMPLES[v];
+  const conf = VILLES.find(x => x.id === v) || {};
+  $("aideVille").textContent = AIDES[v] || `Dis les lignes puis l'arrêt : « ${conf.exemple || "ligne 1 Gare"} ». Sans ligne, tout s'affiche.`;
+  $("question").placeholder = EXEMPLES[v] || `ex : ${conf.exemple || "ligne 1 Gare"}`;
   $("resultats").innerHTML = ""; $("statut").textContent = ""; $("proches").innerHTML = "";
   DERNIERE = null;
   montrerRecents();
@@ -329,10 +336,11 @@ async function chercher(question, opts = {}) {
   question = question.trim();
   if (!question) return;
   const { lignes, arret } = analyser(question);
-  if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. " + EXEMPLES[VILLE]; return; }
+  if (!arret.length) { $("statut").textContent = "Je n'ai pas compris l'arrêt. " + (EXEMPLES[VILLE] || ""); return; }
   if (!opts.silencieux) { $("statut").textContent = "Recherche…"; $("resultats").innerHTML = ""; }
   let r;
-  try { r = VILLE === "PARIS" ? await chercherParis(arret, opts.force) : await chercherLille(arret, opts.force); }
+  try { r = VILLE === "PARIS" ? await chercherParis(arret, opts.force) : VILLE === "LILLE" ? await chercherLille(arret, opts.force)
+                                                                       : await chercherGtfs(villeActuelle(), arret, opts.force); }
   catch (e) { if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
   DERNIERE = { question, force: opts.force, ville: VILLE };
@@ -488,6 +496,120 @@ async function trainsTer(gares, maintenant, limite, nomArret = "") {
   return items;
 }
 
+// ===================== MOTEUR COMMUN (Bordeaux, Rennes… : GTFS + GTFS-RT) =====================
+const INDEX_GTFS = {}, CACHE_GTFS = {}, RT_GTFS = {};
+const NOMS_MODES = { 0: ["TRAM", "Tram"], 1: ["METRO", "Métro"], 2: ["TRAIN", "Train"], 3: ["BUS", "Bus"], 4: ["BUS", "Bateau"],
+                     5: ["TRAM", "Tram"], 6: ["BUS", "Téléphérique"], 7: ["TRAM", "Funiculaire"], 11: ["BUS", "Trolley"] };
+
+// Temps réel GTFS-RT d'un réseau (relu au plus toutes les 30 s) :
+// trajets[trip_id] = { supprime, maj: [{ seq, stop, retard, heure, saute }] } et routes[route_id] = trajets du flux
+async function tempsReelGtfs(url) {
+  const c = RT_GTFS[url];
+  if (c && Date.now() - c.t < 30000) return c.data;
+  const buf = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const trajets = {};
+  for (const [n, ent] of lireProto(buf)) {
+    if (n !== 2) continue;
+    for (const [m, tu] of lireProto(buf, ...ent)) {
+      if (m !== 3) continue;
+      let tripId = "", route = "", supprime = false;
+      const maj = [];
+      for (const [k, v] of lireProto(buf, ...tu)) {
+        if (k === 1) for (const [x, y] of lireProto(buf, ...v)) {
+          if (x === 1) tripId = texteProto(buf, y);
+          if (x === 5) route = texteProto(buf, y);
+          if (x === 4 && y === 3n) supprime = true;          // CANCELED
+        }
+        if (k === 2) {
+          const u = { seq: null, stop: "", retard: null, heure: null, saute: false };
+          for (const [x, y] of lireProto(buf, ...v)) {
+            if (x === 1) u.seq = Number(y);
+            if (x === 4) u.stop = texteProto(buf, y);
+            if (x === 5 && y === 1n) u.saute = true;           // SKIPPED
+            if ((x === 2 || x === 3) && Array.isArray(y)) for (const [a, b] of lireProto(buf, ...y)) {
+              if (a === 1 && (x === 3 || u.retard === null)) u.retard = entier(b);
+              if (a === 2 && (x === 3 || u.heure === null) && b > 0n) u.heure = Number(b);
+            }
+          }
+          maj.push(u);
+        }
+      }
+      if (tripId) trajets[tripId] = { route, supprime, maj };
+    }
+  }
+  RT_GTFS[url] = { t: Date.now(), data: trajets };
+  return trajets;
+}
+
+async function chercherGtfs(conf, arret, force) {
+  const dossier = `horaires/${conf.gtfs}`;
+  INDEX_GTFS[conf.id] ??= await (await fetch(`${dossier}/stations.json`)).json().then(d => d.stations).catch(() => ({}));
+  const index = INDEX_GTFS[conf.id];
+  const nom = force?.nom || meilleurNom(Object.keys(index), arret);
+  if (!nom) return null;
+  const ids = force?.ids || (force?.id ? [force.id] : (index[nom] || []));
+  const fichiers = await Promise.all(ids.map(async id => {
+    const cle = `${conf.id}/${id}`;
+    if (!CACHE_GTFS[cle]) { try { CACHE_GTFS[cle] = await (await fetch(`${dossier}/${id}.json`)).json(); } catch { CACHE_GTFS[cle] = null; } }
+    return CACHE_GTFS[cle];
+  }));
+
+  const maintenant = new Date(), limite = maintenant.getTime() + 36 * 3600000;
+  const items = [];
+  for (const f of fichiers) {
+    if (!f) continue;
+    for (const [d, lignes] of Object.entries(f.j)) {
+      const minuit = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+      for (const [min, li, si, qi, ti, seq] of lignes) {
+        const h = new Date(minuit.getTime() + min * 60000);
+        if (h < maintenant - 30 * 60000 || h > limite) continue;    // marge de 30 min pour les bus en retard
+        const [code, type, couleur, texte, route] = f.l[li];
+        const [mode, nomMode] = NOMS_MODES[type] || NOMS_MODES[3];
+        items.push({ ligne: code.toUpperCase(), code: code.toUpperCase(), mode, nomMode, couleur, texte, route, sens: normaliser(f.s[si]),
+                     h, prevue: h, quai: f.q[qi], trip: f.t[ti], seq, prevu: true, independant: true });
+      }
+    }
+  }
+
+  // Temps réel : par trajet (identifiant commun), sinon rattachement par ligne + quai + heure la plus proche
+  let tempsReelOk = !conf.rt;
+  if (conf.rt) {
+    try {
+      const rt = await tempsReelGtfs(conf.rt);
+      tempsReelOk = true;
+      const appliquer = (it, u, supprime) => {
+        if (supprime || u.saute) it.supprime = true;
+        if (u.heure) it.h = new Date(u.heure * 1000);
+        else if (u.retard !== null) it.h = new Date(it.prevue.getTime() + u.retard * 1000);
+        it.retard = Math.round((it.h - it.prevue) / 60000);
+        it.prevu = false;
+      };
+      const quais = new Set(items.map(i => i.quai));
+      const utilises = new Set();
+      for (const it of items) {
+        const t = rt[it.trip];
+        if (!t) continue;
+        // la mise à jour de cet arrêt, sinon la dernière avant lui (le retard se propage)
+        let u = t.maj.find(x => x.stop === it.quai) || [...t.maj].reverse().find(x => x.seq !== null && x.seq <= it.seq && x.seq > 0);
+        if (u || t.supprime) { appliquer(it, u || {}, t.supprime); utilises.add(it.trip); }
+      }
+      for (const [tripId, t] of Object.entries(rt)) {
+        if (utilises.has(tripId)) continue;
+        for (const u of t.maj) {
+          if (!quais.has(u.stop) || !u.heure) continue;
+          const vrai = u.heure * 1000;
+          const candidats = items.filter(i => i.prevu && i.quai === u.stop && (!t.route || i.route === t.route)
+                                              && Math.abs(i.prevue - vrai) < 20 * 60000);
+          const c = candidats.sort((a, b) => Math.abs(a.prevue - vrai) - Math.abs(b.prevue - vrai))[0];
+          if (c) appliquer(c, u, t.supprime);
+        }
+      }
+    } catch { tempsReelOk = false; }
+  }
+  const liste = items.filter(i => i.h >= new Date(maintenant.getTime() - 60000));
+  return { nom, titre: force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom, items: liste, tempsReelOk };
+}
+
 // ===================== PARIS (Île-de-France Mobilités / PRIM) =====================
 // Clé PRIM gratuite (compte de Nice). Elle est visible ici : si elle est abusée, en régénérer une sur PRIM.
 const PRIM = "https://prim.iledefrance-mobilites.fr/marketplace";
@@ -620,7 +742,7 @@ function afficher(r, liste, question, opts) {
   if (VILLE === "LILLE" && lignesAff.some(([, c]) => c[0].mode === "TRAIN"))
     html += `<p class="aide">🎫 Les tickets Ilevia sont valables dans le TER pour voyager entre deux gares de la métropole.
              <a href="https://www.ter.sncf.com/hauts-de-france/tarifs-cartes/autres-tarifs-ter/tarifs-transports-en-commun/voyager-en-ter-aux-tarifs-ilevia">Conditions sur ter.sncf.com</a></p>`;
-  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : "Ilevia / SNCF"} · mise à jour auto toutes les 30 s</p>`;
+  html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : VILLE === "LILLE" ? "Ilevia / SNCF" : villeActuelle().source || ""} · mise à jour auto toutes les 30 s</p>`;
   $("resultats").innerHTML = html;
   $("btnFavori").onclick = () => { basculerFavori(question); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
@@ -715,7 +837,7 @@ async function afficherPerturbations(r, lignes) {
         const m = (d.messages || []).find(x => (x.channel?.types || []).includes("web")) || (d.messages || [])[0];
         if (codes.length && m) msgs.push({ lignes: [...new Set(codes)], texte: sansBalises(m.text) });
       }
-    } else {
+    } else if (VILLE === "LILLE") {
       const params = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature",
         typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
       const data = await (await fetch(`${WFS}?${params}`)).json();
@@ -746,6 +868,7 @@ const distance = (a, b, c, d) => { // mètres entre deux points GPS
   return 2 * R * Math.asin(Math.sqrt(h));
 };
 let ARRETS_LILLE = null, ARRETS_PARIS = null;
+const ARRETS_GTFS = {};
 async function autourDeMoi() {
   if (!navigator.geolocation) { $("statut").textContent = "Localisation non disponible sur ce téléphone."; return; }
   $("statut").textContent = "📍 Je cherche où tu es…"; $("resultats").innerHTML = ""; $("proches").innerHTML = "";
@@ -762,6 +885,20 @@ async function autourDeMoi() {
         proches = ARRETS_PARIS.map(([num, label, a, b]) => ({ nom: label, m: distance(la, lo, a, b),
             force: { zone: { id: `stop_area:IDFM:${num}`, name: sansCommune(label), label } } }))
           .sort((x, y) => x.m - y.m).slice(0, 5);
+      } else if (villeActuelle().gtfs) {
+        const conf = villeActuelle();
+        ARRETS_GTFS[conf.id] ??= await (await fetch(`horaires/${conf.gtfs}/arrets.json`)).json();
+        // Un même arrêt peut être découpé en plusieurs groupes de quais : on les réunit (même nom, à moins de 500 m)
+        const tous = ARRETS_GTFS[conf.id].map(([id, nom, commune, a, b]) => ({ id, nom, commune, a, b, m: distance(la, lo, a, b) }))
+          .sort((x, y) => x.m - y.m);
+        const vus = new Set();
+        for (const p of tous) {
+          if (vus.has(p.nom)) continue;
+          vus.add(p.nom);
+          const ids = tous.filter(q => q.nom === p.nom && distance(p.a, p.b, q.a, q.b) < 500).map(q => q.id);
+          proches.push({ nom: p.nom, m: p.m, force: { nom: p.nom, ids, commune: p.commune } });
+          if (proches.length === 5) break;
+        }
       } else {
         ARRETS_LILLE ??= await (await fetch("horaires/arrets.json")).json();
         proches = ARRETS_LILLE.map(([id, nom, commune, a, b]) => ({ nom, m: distance(la, lo, a, b), force: { nom, id, commune } }))
