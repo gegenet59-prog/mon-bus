@@ -72,6 +72,9 @@ def services_actifs(z, jours):
     return actifs
 
 
+SORTIE = ""
+
+
 def completer_communes(arrets):
     """Arrêts du même nom à plus d'1 km l'un de l'autre (Wagner à Lille ET à Wattrelos) sans commune dans les données :
     on demande la commune à l'API officielle geo.api.gouv.fr (par position). En cas d'échec, l'appli dit « près de … »."""
@@ -82,6 +85,18 @@ def completer_communes(arrets):
     a_faire = [a for liste in par_nom.values() if len(liste) > 1
                and any(metres(x[3], x[4], y[3], y[4]) > 1000 for x in liste for y in liste)
                for a in liste if not a[2]]
+    # Hors de la nuit (publication après une modification) : on reprend les communes déjà publiées, sans appeler l'API
+    if os.environ.get("GITHUB_EVENT_NAME") == "push" and a_faire:
+        try:
+            url = f"https://gegenet59-prog.github.io/mon-bus/horaires/{os.path.basename(SORTIE)}/arrets.json"
+            with urllib.request.urlopen(url, timeout=20) as r:
+                connues = {x[0]: x[2] for x in json.load(r) if x[2]}
+            for a in a_faire:
+                a[2] = connues.get(a[0], "")
+            print(f"  communes reprises du site publié : {sum(1 for a in a_faire if a[2])}/{len(a_faire)}")
+            return
+        except Exception:
+            pass   # site injoignable : on fait comme la nuit
     trouves = echecs = 0
     for a in a_faire:
         if echecs >= 5:      # API injoignable : on n'insiste pas
@@ -102,7 +117,8 @@ def completer_communes(arrets):
 
 def main():
     ville, source = sys.argv[1], sys.argv[2]
-    sortie = os.path.join(sys.argv[3] if len(sys.argv) > 3 else "horaires", ville.lower())
+    global SORTIE
+    sortie = SORTIE = os.path.join(sys.argv[3] if len(sys.argv) > 3 else "horaires", ville.lower())
     if source.startswith("http"):
         req = urllib.request.Request(source, headers={"User-Agent": "Mozilla/5.0 (mon-bus)"})
         with urllib.request.urlopen(req, timeout=600) as r:
