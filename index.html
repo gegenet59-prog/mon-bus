@@ -479,6 +479,13 @@ async function chercher(question, opts = {}) {
   }
   catch (e) { NOMS_ECARTES = new Set(); if (!opts.silencieux) $("statut").textContent = "Problème de connexion. Réessaie dans un instant."; return; }
   if (!r) { $("statut").textContent = "Arrêt introuvable. Vérifie le nom."; return; }
+  // Ancien favori (simple nom, ex. « Wagner ») : on le remplace par l'arrêt précis qui vient de s'afficher (« Wagner (Lille) »)
+  if (opts.ancienFavori && r.precis) {
+    const n = titre(r.titre || r.nom), vus = new Set();
+    ecrireListe("favoris", lireListe("favoris").map(x => x === opts.ancienFavori ? { n, f: r.precis } : x)
+      .filter(x => !vus.has(nomFavori(x)) && vus.add(nomFavori(x))));
+    montrerRecents();
+  }
   DERNIERE = { question, force: opts.force, ville: VILLE, t: opts.silencieux && DERNIERE ? DERNIERE.t : Date.now() };
   if (CHOIX_SECTEURS && !opts.silencieux) {
     const { nom, secteurs } = CHOIX_SECTEURS;
@@ -1118,7 +1125,7 @@ function montrerRecents() {
     // Petites pastilles comme les anciens « derniers arrêts » ; on retire un favori avec l'étoile de son résultat
     const q = nomFavori(x);
     const b = document.createElement("button"); b.textContent = "⭐ " + q;
-    b.onclick = () => { $("question").value = q; chercher(q, x.f ? { force: x.f } : {}); };
+    b.onclick = () => { $("question").value = q; chercher(q, x.f ? { force: x.f } : { ancienFavori: q }); };
     $("favoris").appendChild(b);
   }
   // Les derniers arrêts consultés ne sont plus affichés : seuls les favoris restent à l'accueil
