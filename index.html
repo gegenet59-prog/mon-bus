@@ -73,13 +73,8 @@
   .itin { flex:none; width:36px; height:36px; border-radius:50%; background:#e6f1fb; color:#185fa5; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
   .itin:active { transform:scale(.95); }
   h2.avec-itin { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  #favoris { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
-  .favori { display:flex; gap:6px; }
-  .favori button:first-child { flex:1; text-align:left; padding:14px; background:#fff8d6; color:var(--texte); border:2px solid #f2c94c; font-weight:700; }
-  .outils-arret { display:flex; align-items:center; gap:8px; }
-  .etoile { background:#fff; color:#c9a227; border:2px solid #f2c94c; font-size:22px; line-height:1; padding:6px 10px; }
-  .etoile.cochee { background:#fff8d6; }
-  .favori .retirer { background:#fff; color:var(--gris); border:1px solid #ddd; padding:0 14px; }
+  #favoris { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  #favoris button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
   .actions { display:flex; gap:8px; margin-top:10px; border-top:1px solid #eee; padding-top:10px; }
   .actions button { flex:1; padding:10px; font-size:14px; background:#f2f2f4; color:var(--texte); }
   .trafic h2 { color:#b45309; }
@@ -1075,12 +1070,10 @@ function montrerRecents() {
   // Favoris : gros boutons ⭐ (✕ pour retirer)
   $("favoris").innerHTML = "";
   for (const q of lireListe("favoris")) {
-    const d = document.createElement("div"); d.className = "favori";
+    // Petites pastilles comme les anciens « derniers arrêts » ; on retire un favori avec l'étoile de son résultat
     const b = document.createElement("button"); b.textContent = "⭐ " + q;
     b.onclick = () => { $("question").value = q; chercher(q); };
-    const x = document.createElement("button"); x.textContent = "✕"; x.className = "retirer"; x.title = "Retirer des favoris";
-    x.onclick = () => basculerFavori(q);
-    d.append(b, x); $("favoris").appendChild(d);
+    $("favoris").appendChild(b);
   }
   // Les derniers arrêts consultés ne sont plus affichés : seuls les favoris restent à l'accueil
   $("recents").innerHTML = "";
