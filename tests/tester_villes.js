@@ -11,11 +11,13 @@ const QUESTIONS = {
           "Gare Lille Flandre", "tram Gare Lille Europe", "tram R Gare Lille Europe", "tram T Gare Lille Europe", "métro 2 Gare Lille Europe",
           "C3 Victoire", "C3 CH Dron", "C3 Dron", "CH Dron", "tram Gare Lille Flandres direction Roubaix", "métro 2 Gare Lille Flandres direction CH Dron"],
   PARIS: ["RER A Châtelet", "RER B Gare du Nord", "métro 4 Gare du Nord", "métro 14 Gare de Lyon", "tram T3a Porte de Vincennes"],
-  BORDEAUX: ["tram C Quinconces", "tram B Hôtel de Ville direction Pessac"],
-  RENNES: ["métro a République", "bus C1 République"],
-  AMIENS: ["Gare"],
+  BORDEAUX: ["tram C Quinconces", "tram B Hôtel de Ville direction Pessac", "tram A Porte de Bourgogne", "Gare Saint-Jean", "bus 15 Victoire",
+             "Les Iris", "Peixotto", "Village 4", "Mérignac Soleil porte 1", "bateau Stalingrad"],
+  RENNES: ["métro a République", "métro b Gares", "bus C1 République", "République direction Kennedy", "Villejean Université"],
+  AMIENS: ["Gare", "N1 Gare du Nord", "Longs Champs Est", "Laennec", "bus 5A Laennec"],
   MARSEILLE: ["métro 1 Castellane", "tram 2 Castellane", "Castellane"],
-  NICE: ["tram 1 Masséna", "tram Masséna", "Garibaldi"],
+  NICE: ["tram 1 Masséna", "tram Masséna", "Garibaldi", "bus 5 Deloye", "Deloye / Dubouchage", "tram 2 Aéroport Terminal 2", "Port Lympia",
+         "Jean Médecin", "Cassin Kirchner", "Masséna Guitry"],
   GRENOBLE: ["tram A Gares", "tram B Gares", "Victor Hugo"],
   MONTPELLIER: ["comedie", "tram 2 Comédie", "tram 1 Comédie direction Odysseum", "Comédie direction Sabines",
                 "Gare St Roch", "Place de l'Europe", "bus 6 Euromédecine", "Odysseum direction Gare Sud France"],
@@ -23,7 +25,7 @@ const QUESTIONS = {
 
 (async () => {
   const navigateur = await chromium.launch();
-  const page = await navigateur.newPage();
+  const page = await navigateur.newPage({ timezoneId: "Europe/Paris" });
   for (const [ville, questions] of Object.entries(QUESTIONS)) {
     await page.goto(BASE);
     await page.evaluate(v => localStorage.setItem("ville", v), ville);
