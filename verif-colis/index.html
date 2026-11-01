@@ -103,7 +103,11 @@
     <div class="statut s-att" id="rScelle">⏳ Scellé en cours…</div>
   </div>
   <button class="btn btn-o" onclick="sauverVideo()">💾 Enregistrer la vidéo</button>
-  <button class="btn btn-p" onclick="partagerLien()">🔗 Partager le lien de vérification</button>
+  <div class="carte" style="margin-top:14px;border:2px solid var(--vert2)">
+    <b>📨 Maintenant, envoie le lien dans la conversation de la vente</b>
+    <p class="aide" style="margin:6px 0 0">Vinted, Leboncoin… La plateforme date ton message elle-même : personne ne pourra contester l'heure. Et l'autre personne sait qu'il y a une preuve.</p>
+    <button class="btn btn-p" onclick="partagerLien()">📨 Envoyer le lien de preuve</button>
+  </div>
   <button class="btn btn-s" id="btnOts" onclick="sauverOts()" style="display:none">📄 Télécharger le scellé (.ots)</button>
   <div class="statut s-ko" style="margin-top:14px">⚠️ Garde cette vidéo jusqu'à la fin de la vente. Sans elle, le scellé ne prouve rien.</div>
   <button class="btn btn-s" onclick="aller('accueil')">Terminer</button>
@@ -126,6 +130,8 @@
   </div>
   <label class="fichier">🎞️ Choisir la vidéo à vérifier<input type="file" accept="video/*" id="vFichier" onchange="verifierVideo(this)"></label>
   <div id="vResultat"></div>
+  <div id="vScelle"></div>
+  <label class="fichier" id="vOtsZone" style="display:none">📄 Ajouter le fichier de scellé (.ots), si tu l'as<input type="file" id="vOts" onchange="chargerOts(this)"></label>
   <p class="petit">La vidéo reste sur ton téléphone : rien n'est envoyé. Pour contrôler la date de façon indépendante, dépose la vidéo et son fichier .ots sur <a href="https://opentimestamps.org" target="_blank" rel="noopener">opentimestamps.org</a>.</p>
 </section>
 
@@ -324,9 +330,9 @@ async function partagerFichier(blob,nom){
 }
 function sauverVideo(){ partagerFichier(S.blob,nomFichier()); }
 function sauverOts(){ if(S.ots) partagerFichier(new Blob([S.ots]),nomFichier()+'.ots'); }
-function lienVerif(h){ h=h||{n:S.numero,r:S.role,h:S.hash,t:S.debut.toISOString()}; const u=new URL(location.href); u.hash='verif?'+new URLSearchParams(h).toString(); return u.toString(); }
+function lienVerif(h){ h=h||{n:S.numero,r:S.role,h:S.hash,t:S.debut.toISOString()}; h=Object.assign({},h); if(S.ots && h.h===S.hash) h.s=b64u(S.ots); if(!h.s) delete h.s; delete h.ok; const u=new URL(location.href); u.hash='verif?'+new URLSearchParams(h).toString(); return u.toString(); }
 async function partagerLien(){
-  const url=lienVerif(), texte="Preuve vidéo Verif'Colis du colis "+S.numero+" ("+(S.role==='vendeur'?'emballage':'ouverture')+", filmé le "+dateFr(S.debut)+") :";
+  const url=lienVerif(), texte="📦 Preuve vidéo Verif'Colis du colis "+S.numero+" ("+(S.role==='vendeur'?"emballage et collage du bordereau":"ouverture du colis")+", filmé le "+dateFr(S.debut)+"). Vidéo scellée, vérifiable ici :";
   if(navigator.share){ try{ await navigator.share({title:"Verif'Colis",text:texte,url}); return; }catch(e){ if(e.name==='AbortError') return; } }
   try{ await navigator.clipboard.writeText(texte+' '+url); alert('Lien copié !'); }catch(e){ prompt('Copie ce lien :',url); }
 }
@@ -334,8 +340,8 @@ async function partagerLien(){
 // ---------- historique (local) ----------
 function lireHist(){ try{ return JSON.parse(localStorage.getItem('vc_hist')||'[]'); }catch(e){ return []; } }
 function ecrireHist(l){ try{ localStorage.setItem('vc_hist',JSON.stringify(l)); }catch(e){} }
-function enregistrerHist(){ const l=lireHist(); l.unshift({n:S.numero,r:S.role,h:S.hash,t:S.debut.toISOString(),s:false}); ecrireHist(l.slice(0,100)); }
-function majHistScelle(ok){ const l=lireHist(); if(l[0] && l[0].h===S.hash){ l[0].s=ok; ecrireHist(l); } }
+function enregistrerHist(){ const l=lireHist(); l.unshift({n:S.numero,r:S.role,h:S.hash,t:S.debut.toISOString(),ok:false}); ecrireHist(l.slice(0,100)); }
+function majHistScelle(ok){ const l=lireHist(); if(l[0] && l[0].h===S.hash){ l[0].ok=ok; if(S.ots) l[0].s=b64u(S.ots); ecrireHist(l); } }
 function ouvrirHistorique(){
   const l=lireHist(), z=$('listeHist');
   if(!l.length){ z.innerHTML='<p class="aide">Aucune preuve pour l’instant.</p>'; aller('historique'); return; }
@@ -352,7 +358,7 @@ async function partagerHist(i){ const p=lireHist()[i]; const url=lienVerif(p);
 // ---------- vérification ----------
 let attendu=null;
 function ouvrirVerif(p){
-  attendu=p||null; $('vResultat').innerHTML=''; $('vFichier').value='';
+  attendu=p||null; otsFourni=(p&&p.s)?deb64u(p.s):null; dernierHash=null; $('vResultat').innerHTML=''; $('vScelle').innerHTML=''; $('vOtsZone').style.display=otsFourni?'none':'block'; $('vFichier').value='';
   if(p){ $('vInfos').style.display='block'; $('vSansLien').style.display='none';
     $('vEtq').textContent=p.r==='vendeur'?'VENDEUR · EMBALLAGE':'ACHETEUR · OUVERTURE'; $('vEtq').className='etiquette'+(p.r==='acheteur'?' a':'');
     $('vNum').textContent=p.n; $('vDate').textContent=p.t?dateFr(new Date(p.t)):'—'; $('vHash').textContent=p.h;
@@ -366,14 +372,84 @@ async function verifierVideo(inp){
   const h=[...hb].map(b=>b.toString(16).padStart(2,'0')).join('');
   const cible=(attendu?attendu.h:$('vHashSaisi').value).trim().toLowerCase();
   if(!cible){ z.innerHTML='<div class="statut s-att">Empreinte de cette vidéo :</div><div class="empreinte">'+h+'</div>'; return; }
+  dernierHash=hb; if(otsFourni) verifierScelle(otsFourni,hb);
   if(h===cible) z.innerHTML='<div class="statut s-ok">✅ Vidéo intacte : c’est exactement la vidéo filmée'+(attendu&&attendu.t?' le '+dateFr(new Date(attendu.t)):'')+'. Aucune image n’a été modifiée.</div>';
   else z.innerHTML='<div class="statut s-ko">❌ Cette vidéo ne correspond pas : elle a été modifiée, recoupée, ou ce n’est pas la bonne vidéo.</div><div class="empreinte">'+h+'</div>';
 }
 
+
+// ---------- scellé OpenTimestamps : lecture et contrôle ----------
+let otsFourni=null, dernierHash=null;
+function b64u(u8){ let s=''; u8.forEach(b=>s+=String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function deb64u(t){ try{ t=t.replace(/-/g,'+').replace(/_/g,'/'); while(t.length%4) t+='='; return Uint8Array.from(atob(t),c=>c.charCodeAt(0)); }catch(e){ return null; } }
+const hex=u=>[...u].map(b=>b.toString(16).padStart(2,'0')).join('');
+const egal=(a,b)=>a.length===b.length&&a.every((x,i)=>x===b[i]);
+const TAG_ATTENTE='83dfe30d2ef90c8e', TAG_BITCOIN='0588960d73d71901';
+function lecteur(u8){ let i=0; const r={
+  octet(){ if(i>=u8.length) throw new Error('fin'); return u8[i++]; },
+  octets(n){ if(i+n>u8.length) throw new Error('fin'); const b=u8.slice(i,i+n); i+=n; return b; },
+  varuint(){ let v=0,m=1,b; do{ b=r.octet(); v+=(b&0x7f)*m; m*=128; }while(b&0x80); return v; },
+  varbytes(){ return r.octets(r.varuint()); } }; return r; }
+async function sha256(u8){ return new Uint8Array(await crypto.subtle.digest('SHA-256',u8)); }
+async function lireHorodatage(r,msg,sortie){
+  const traiter=async(tag)=>{
+    if(tag===0x00){ const t=hex(r.octets(8)); const charge=r.varbytes(); sortie.push({msg,tag:t,charge}); return; }
+    let m;
+    if(tag===0xf0){ const a=r.varbytes(); m=new Uint8Array([...msg,...a]); }
+    else if(tag===0xf1){ const a=r.varbytes(); m=new Uint8Array([...a,...msg]); }
+    else if(tag===0x08){ m=await sha256(msg); }
+    else if(tag===0xf2){ m=msg.slice().reverse(); }
+    else throw new Error('opération non gérée '+tag);
+    await lireHorodatage(r,m,sortie);
+  };
+  let tag=r.octet();
+  while(tag===0xff){ await traiter(r.octet()); tag=r.octet(); }
+  await traiter(tag);
+}
+async function analyserOts(ots){
+  const r=lecteur(ots), magie=r.octets(OTS_MAGIC.length);
+  if(!egal(magie,OTS_MAGIC)) throw new Error('pas un scellé');
+  r.varuint(); if(r.octet()!==0x08) throw new Error('empreinte non SHA-256');
+  const empreinte=r.octets(32), att=[]; await lireHorodatage(r,empreinte,att);
+  return {empreinte,att};
+}
+async function confirmerBitcoin(att){
+  // att : attestation Bitcoin {msg, charge} -> {ok, date, hauteur}
+  const hauteur=lecteur(att.charge).varuint();
+  const h=await (await fetch('https://blockstream.info/api/block-height/'+hauteur)).text();
+  const bloc=await (await fetch('https://blockstream.info/api/block/'+h.trim())).json();
+  const ok=hex(att.msg.slice().reverse())===bloc.merkle_root;
+  return {ok,hauteur,date:new Date(bloc.timestamp*1000)};
+}
+async function verifierScelle(ots,hashVideo){
+  const z=$('vScelle'); z.innerHTML='<div class="statut s-att">⏳ Lecture du scellé…</div>';
+  let a; try{ a=await analyserOts(ots); }catch(e){ z.innerHTML='<div class="statut s-ko">Le scellé est illisible.</div>'; return; }
+  if(!egal(a.empreinte,hashVideo)){ z.innerHTML='<div class="statut s-ko">❌ Le scellé ne correspond pas à cette vidéo.</div>'; return; }
+  let btc=a.att.filter(x=>x.tag===TAG_BITCOIN);
+  if(!btc.length){
+    for(const p of a.att.filter(x=>x.tag===TAG_ATTENTE)){
+      try{ const url=new TextDecoder().decode(lecteur(p.charge).varbytes());
+        const rep=await fetch(url.replace(/\/$/,'')+'/timestamp/'+hex(p.msg),{headers:{'Accept':'application/vnd.opentimestamps.v1'}});
+        if(!rep.ok) continue;
+        const sup=[]; await lireHorodatage(lecteur(new Uint8Array(await rep.arrayBuffer())),p.msg,sup);
+        btc=btc.concat(sup.filter(x=>x.tag===TAG_BITCOIN)); if(btc.length) break;
+      }catch(e){}
+    }
+  }
+  for(const b of btc){
+    try{ const c=await confirmerBitcoin(b);
+      if(c.ok){ z.innerHTML='<div class="statut s-ok">🔏 Date garantie : cette vidéo existait déjà le '+dateFr(c.date)+' au plus tard (registre public Bitcoin, bloc '+c.hauteur+'). Personne ne peut modifier cette date.</div>'; return; }
+    }catch(e){}
+  }
+  if(btc.length){ z.innerHTML='<div class="statut s-att">Scellé trouvé, mais la confirmation n’a pas pu être vérifiée pour le moment (réseau ?). Réessaie plus tard.</div>'; return; }
+  z.innerHTML='<div class="statut s-att">⏳ Scellé valide et bien lié à cette vidéo, en attente de confirmation dans le registre public (quelques heures après le film).</div>';
+}
+function chargerOts(inp){ const f=inp.files[0]; if(!f) return; f.arrayBuffer().then(b=>{ otsFourni=new Uint8Array(b); if(dernierHash) verifierScelle(otsFourni,dernierHash); else $('vScelle').innerHTML='<div class="statut s-att">Scellé chargé. Choisis maintenant la vidéo.</div>'; }); }
+
 // ---------- ouverture par lien ----------
 function routeur(){
   const m=location.hash.match(/^#verif\?(.*)$/);
-  if(m){ const q=new URLSearchParams(m[1]); ouvrirVerif({n:q.get('n')||'',r:q.get('r')||'vendeur',h:q.get('h')||'',t:q.get('t')||''}); }
+  if(m){ const q=new URLSearchParams(m[1]); ouvrirVerif({n:q.get('n')||'',r:q.get('r')||'vendeur',h:q.get('h')||'',t:q.get('t')||'',s:q.get('s')||''}); }
 }
 window.addEventListener('hashchange',routeur); routeur();
 </script>
