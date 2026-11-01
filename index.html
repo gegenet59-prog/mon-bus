@@ -76,6 +76,9 @@
   #favoris { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
   .favori { display:flex; gap:6px; }
   .favori button:first-child { flex:1; text-align:left; padding:14px; background:#fff8d6; color:var(--texte); border:2px solid #f2c94c; font-weight:700; }
+  .outils-arret { display:flex; align-items:center; gap:8px; }
+  .etoile { background:#fff; color:#c9a227; border:2px solid #f2c94c; font-size:22px; line-height:1; padding:6px 10px; }
+  .etoile.cochee { background:#fff8d6; }
   .favori .retirer { background:#fff; color:var(--gris); border:1px solid #ddd; padding:0 14px; }
   .actions { display:flex; gap:8px; margin-top:10px; border-top:1px solid #eee; padding-top:10px; }
   .actions button { flex:1; padding:10px; font-size:14px; background:#f2f2f4; color:var(--texte); }
@@ -996,7 +999,10 @@ function afficher(r, liste, question, opts) {
     || String(a[1][0].code ?? a[1][0].ligne).localeCompare(String(b[1][0].code ?? b[1][0].ligne), "fr", { numeric: true })
     || a[0].split("|")[2].localeCompare(b[0].split("|")[2], "fr"));
 
-  let html = `<div class="arret"><h2 class="avec-itin"><span>${titre(arret)}</span>${boutonItineraire(r.position, arret)}</h2>`;
+  let html = `<div class="arret"><h2 class="avec-itin"><span>${titre(arret)}</span><span class="outils-arret">`
+    + `<button id="btnFavori" class="etoile${lireListe("favoris").includes(titre(arret)) ? " cochee" : ""}" `
+    + `title="${lireListe("favoris").includes(titre(arret)) ? "Retirer des favoris" : "Ajouter aux favoris"}" aria-label="Favori">`
+    + `${lireListe("favoris").includes(titre(arret)) ? "★" : "☆"}</button>${boutonItineraire(r.position, arret)}</span></h2>`;
   let rangPrecedent = null;
   for (const [cle, choix] of lignesAff) {
     const sens = cle.split("|")[2];
@@ -1007,14 +1013,14 @@ function afficher(r, liste, question, opts) {
     html += `<div class="ligne"><span class="num"${style}><small>${premier.nomMode || ""}</small>${premier.code ?? premier.ligne}</span><span class="sens">→ ${titre(sens)}</span>
              <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
   }
-  const favori = lireListe("favoris").includes(question);
-  html += `<div class="actions"><button id="btnFavori">${favori ? "★ Dans tes favoris" : "☆ Ajouter aux favoris"}</button><button id="btnEcouter">🔊 Écouter</button></div>`;
+  html += `<div class="actions"><button id="btnEcouter">🔊 Écouter</button></div>`;
   if (VILLE === "LILLE" && lignesAff.some(([, c]) => c[0].mode === "TRAIN"))
     html += `<p class="aide">🎫 Les tickets Ilevia sont valables dans le TER pour voyager entre deux gares de la métropole.
              <a href="https://www.ter.sncf.com/hauts-de-france/tarifs-cartes/autres-tarifs-ter/tarifs-transports-en-commun/voyager-en-ter-aux-tarifs-ilevia">Conditions sur ter.sncf.com</a></p>`;
   html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : VILLE === "LILLE" ? "Ilevia / SNCF" : villeActuelle().source || ""} · mise à jour auto ${VILLE === "PARIS" ? "chaque minute pendant 10 min" : "toutes les 30 s"}</p>`;
   $("resultats").innerHTML = html;
-  $("btnFavori").onclick = () => { basculerFavori(question); afficher(r, liste, question, { silencieux: true }); };
+  // Étoile à côté du nom : met l'ARRÊT en favori (juste son nom ; un clic dessus montre toutes ses lignes)
+  $("btnFavori").onclick = () => { basculerFavori(titre(arret)); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
   if (opts.voix) parler(arret, lignesAff);
   afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[1]));
@@ -1062,7 +1068,7 @@ function memoriser(q, cle) {
 }
 function basculerFavori(q) {
   const l = lireListe("favoris");
-  ecrireListe("favoris", l.includes(q) ? l.filter(x => x !== q) : [...l, q].slice(-6));
+  ecrireListe("favoris", l.includes(q) ? l.filter(x => x !== q) : [...l, q].slice(-12));
   montrerRecents();
 }
 function montrerRecents() {
@@ -1076,15 +1082,8 @@ function montrerRecents() {
     x.onclick = () => basculerFavori(q);
     d.append(b, x); $("favoris").appendChild(d);
   }
-  // Récents (hors favoris)
+  // Les derniers arrêts consultés ne sont plus affichés : seuls les favoris restent à l'accueil
   $("recents").innerHTML = "";
-  const favs = lireListe("favoris");
-  for (const q of lireListe("recents").map(texteRecent).filter(x => !favs.includes(x))) {
-    const b = document.createElement("button");
-    b.textContent = q;
-    b.onclick = () => { $("question").value = q; chercher(q); };
-    $("recents").appendChild(b);
-  }
 }
 
 // ===================== Réponse à voix haute =====================
