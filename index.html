@@ -75,6 +75,9 @@
   h2.avec-itin { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   #favoris { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
   #favoris button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
+  .outils-arret { display:flex; align-items:center; gap:8px; }
+  .etoile { flex:none; width:36px; height:36px; padding:0; border-radius:50%; background:#fff; color:#c9a227; border:2px solid #f2c94c; font-size:20px; line-height:1; }
+  .etoile.cochee { background:#fff8d6; }
   .actions { display:flex; gap:8px; margin-top:10px; border-top:1px solid #eee; padding-top:10px; }
   .actions button { flex:1; padding:10px; font-size:14px; background:#f2f2f4; color:var(--texte); }
   .trafic h2 { color:#b45309; }
@@ -451,10 +454,21 @@ async function chercher(question, opts = {}) {
       let premier = null;
       for (let essai = 0; essai < 3; essai++) {
         DERNIER_NOM = null;
-        r = VILLE === "LILLE" ? await chercherLille(arret, opts.force) : await chercherGtfs(villeActuelle(), arret, opts.force);
+        const cherche = f => VILLE === "LILLE" ? chercherLille(arret, f) : chercherGtfs(villeActuelle(), arret, f);
+        r = await cherche(opts.force);
         premier ??= r;
         const l = sansNumeroDuNom(r);
-        if (!r || opts.force || !l.length || !DERNIER_NOM || r.items.some(it => l.some(f => correspond(it, f)))) break;
+        const aLaLigne = x => x.items.some(it => l.some(f => correspond(it, f)));
+        if (!r || opts.force || !l.length || !DERNIER_NOM || aLaLigne(r)) break;
+        // « C1 Wagner » : même nom ailleurs (Wattrelos) ? on regarde d'abord les autres arrêts de ce nom
+        const choix = CHOIX_SECTEURS;
+        let trouve = null;
+        for (const sct of choix?.secteurs.slice(1) || []) {
+          const x = await cherche({ nom: choix.nom, ids: sct.ids, commune: sct.commune });
+          if (x && aLaLigne(x)) { trouve = x; break; }
+        }
+        CHOIX_SECTEURS = choix;
+        if (trouve) { r = trouve; break; }
         NOMS_ECARTES.add(DERNIER_NOM);
         r = null;
       }
@@ -509,8 +523,29 @@ async function chercherLille(arret, force) {
   const nomsGares = Object.fromEntries(gares.map(g => [normaliser(g[1]), g]));
   const nom = force?.nom || meilleurNom([...Object.keys(index), ...Object.keys(nomsGares)], arret) || arret.join(" ");
   let tempsReel = [], tempsReelOk = true;
-  // Arrêt précis (Autour de moi) ou tous les arrêts de ce nom (ex. Wagner à Lille ET à Wattrelos)
-  const ids = force?.id ? [force.id] : [...(index[nom] || [])];
+  // Arrêt précis (Autour de moi, favori, bouton de choix) ; sinon les arrêts de ce nom, regroupés par secteur :
+  // Wagner existe à Lille ET à Wattrelos -> on garde le plus proche de toi (ou le premier) et on propose l'autre en bouton
+  let ids = force?.ids ? [...force.ids] : force?.id ? [force.id] : [...(index[nom] || [])];
+  let commune = force?.commune || "";
+  if (!force && ids.length > 1) {
+    try {
+      ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json();
+      const pos = Object.fromEntries(ARRETS_LILLE.map(a => [a[0], a]));
+      const secteurs = [];
+      for (const id of ids) {
+        const p = pos[id]; if (!p) continue;
+        const sct = secteurs.find(x => distance(x.a, x.b, p[3], p[4]) < 1000);
+        if (sct) sct.ids.push(id); else secteurs.push({ a: p[3], b: p[4], ids: [id], commune: titre(p[2] || "") });
+      }
+      if (secteurs.length > 1) {
+        for (const sct of secteurs) if (!sct.commune) sct.commune = voisinDe(ARRETS_LILLE, sct.a, sct.b, nom);
+        if (POSITION) secteurs.sort((x, y) => distance(...POSITION, x.a, x.b) - distance(...POSITION, y.a, y.b));
+        CHOIX_SECTEURS = { nom, secteurs };
+        ids = [...secteurs[0].ids]; commune = secteurs[0].commune;
+      }
+    } catch {}
+  }
+  const choisis = [...ids];   // l'arrêt retenu, avant d'y ajouter ses voisins (c'est lui qu'on met en favori)
   // Comme Ilevia, on réunit les arrêts voisins au nom proche : « 4 Cantons Stade » (bus) + « 4 Cantons Stade Pierre Mauroy » (métro)
   try {
     ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json();
@@ -556,9 +591,16 @@ async function chercherLille(arret, force) {
     garesProches = gares.filter(g => pos.some(a => distance(a[3], a[4], g[2], g[3]) < 500));
   }
   if (garesProches.length) items.push(...await trainsTer(garesProches, maintenant, limite, nom));
-  const titreArret = force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom;
   ARRETS_LILLE ??= await (await fetch("horaires/lille/arrets.json")).json().catch(() => []);
-  return { nom, titre: titreArret, items, tempsReelOk, position: positionDe(ARRETS_LILLE, ids, 3) };
+  // La commune n'est ajoutée au nom que s'il existe ailleurs un arrêt du même nom : « Wagner (Lille) »
+  const ici = ARRETS_LILLE.filter(a => choisis.includes(a[0]));
+  const homonyme = ici.length && (index[nom] || []).some(id => {
+    const a = ARRETS_LILLE.find(x => x[0] === id);
+    return a && ici.every(x => distance(x[3], x[4], a[3], a[4]) > 1000);
+  });
+  if (homonyme && !commune) commune = voisinDe(ARRETS_LILLE, ici[0][3], ici[0][4], nom);
+  return { nom, titre: homonyme ? `${titre(nom)} (${commune})` : nom, items, tempsReelOk, position: positionDe(ARRETS_LILLE, ids, 3),
+           precis: { nom, ids: choisis, commune } };
 }
 
 // ===================== TER (SNCF) dans la métropole lilloise =====================
@@ -706,6 +748,7 @@ async function chercherGtfs(conf, arret, force) {
   const nom = force?.nom || meilleurNom(Object.keys(index), arret);
   if (!nom) return null;
   let ids = force?.ids || (force?.id ? [force.id] : (index[nom] || []));
+  let choixCommune = force?.commune || "";
   // Même nom à plusieurs endroits (communes différentes) : on regroupe par secteur et on propose le choix
   if (!force && ids.length > 1) {
     ARRETS_GTFS[conf.id] ??= await (await fetch(`${dossier}/arrets.json`)).json().catch(() => []);
@@ -718,14 +761,11 @@ async function chercherGtfs(conf, arret, force) {
     }
     if (secteurs.length > 1) {
       // Sans nom de commune dans les données : on situe chaque secteur par l'arrêt voisin le plus proche
-      for (const sct of secteurs) if (!sct.commune) {
-        const voisin = ARRETS_GTFS[conf.id].filter(a => a[1] !== nom)
-          .sort((x, y) => distance(sct.a, sct.b, x[3], x[4]) - distance(sct.a, sct.b, y[3], y[4]))[0];
-        if (voisin) sct.commune = `près de ${titre(voisin[1])}`;
-      }
+      for (const sct of secteurs) if (!sct.commune) sct.commune = voisinDe(ARRETS_GTFS[conf.id], sct.a, sct.b, nom);
       if (POSITION) secteurs.sort((x, y) => distance(...POSITION, x.a, x.b) - distance(...POSITION, y.a, y.b));
       CHOIX_SECTEURS = { nom, secteurs };
       ids = secteurs[0].ids;   // le plus proche de toi (ou le premier), les autres sont proposés en boutons
+      choixCommune = secteurs[0].commune;
     }
   }
   const fichiers = await Promise.all(ids.map(async id => {
@@ -798,7 +838,8 @@ async function chercherGtfs(conf, arret, force) {
   for (let k = items.length - 1; k >= 0; k--) if (!items[k].sens) items.splice(k, 1);   // il va juste à l'autre quai du terminus : pas un départ
   const liste = items.filter(i => i.h >= new Date(maintenant.getTime() - 60000));
   ARRETS_GTFS[conf.id] ??= await (await fetch(`${dossier}/arrets.json`)).json().catch(() => []);
-  return { nom, titre: force?.commune && (index[nom] || []).length > 1 ? `${nom} (${force.commune})` : nom, items: liste, tempsReelOk,
+  return { nom, titre: choixCommune && (force || CHOIX_SECTEURS) && (index[nom] || []).length > 1 ? `${titre(nom)} (${choixCommune})` : nom,
+           items: liste, tempsReelOk, precis: { nom, ids, commune: choixCommune },
            position: positionDe(ARRETS_GTFS[conf.id], ids, 3) };
 }
 
@@ -957,7 +998,7 @@ async function chargerZoneParis(zone, nom, num) {
                  h: dateNavitia(d.stop_date_time.departure_date_time), prevu: true, couleur: di.color, texte: di.text_color }, di.commercial_mode, d.route?.line?.name));
   }
   try { ARRETS_PARIS ??= await (await fetch("horaires/arrets_paris.json")).json(); } catch {}
-  return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm, perturbationsParis: dep.disruptions || [],
+  return { nom, titre: zone.label || zone.name, items, tempsReelOk: !!sm, precis: { zone }, perturbationsParis: dep.disruptions || [],
            position: positionDe(ARRETS_PARIS, [num], 2) };
 }
 
@@ -995,9 +1036,9 @@ function afficher(r, liste, question, opts) {
     || a[0].split("|")[2].localeCompare(b[0].split("|")[2], "fr"));
 
   let html = `<div class="arret"><h2 class="avec-itin"><span>${titre(arret)}</span><span class="outils-arret">`
-    + `<button id="btnFavori" class="etoile${lireListe("favoris").includes(titre(arret)) ? " cochee" : ""}" `
-    + `title="${lireListe("favoris").includes(titre(arret)) ? "Retirer des favoris" : "Ajouter aux favoris"}" aria-label="Favori">`
-    + `${lireListe("favoris").includes(titre(arret)) ? "★" : "☆"}</button>${boutonItineraire(r.position, arret)}</span></h2>`;
+    + `<button id="btnFavori" class="etoile${estFavori(titre(arret)) ? " cochee" : ""}" `
+    + `title="${estFavori(titre(arret)) ? "Retirer des favoris" : "Ajouter aux favoris"}" aria-label="Favori">`
+    + `${estFavori(titre(arret)) ? "★" : "☆"}</button>${boutonItineraire(r.position, arret)}</span></h2>`;
   let rangPrecedent = null;
   for (const [cle, choix] of lignesAff) {
     const sens = cle.split("|")[2];
@@ -1015,7 +1056,8 @@ function afficher(r, liste, question, opts) {
   html += `</div><div id="trafic"></div><p class="aide">📡 = temps réel · <i>prévu</i> = horaire théorique ${VILLE === "PARIS" ? "Île-de-France Mobilités" : VILLE === "LILLE" ? "Ilevia / SNCF" : villeActuelle().source || ""} · mise à jour auto ${VILLE === "PARIS" ? "chaque minute pendant 10 min" : "toutes les 30 s"}</p>`;
   $("resultats").innerHTML = html;
   // Étoile à côté du nom : met l'ARRÊT en favori (juste son nom ; un clic dessus montre toutes ses lignes)
-  $("btnFavori").onclick = () => { basculerFavori(titre(arret)); afficher(r, liste, question, { silencieux: true }); };
+  // (on garde l'arrêt PRÉCIS : « Wagner » de Lille et pas celui de Wattrelos)
+  $("btnFavori").onclick = () => { basculerFavori(titre(arret), r.precis); afficher(r, liste, question, { silencieux: true }); };
   $("btnEcouter").onclick = () => parler(arret, lignesAff);
   if (opts.voix) parler(arret, lignesAff);
   afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[1]));
@@ -1061,18 +1103,22 @@ function memoriser(q, cle) {
   ecrireListe("recents", [cle ? { q, k: cle } : q, ...garder].slice(0, 5));
   montrerRecents();
 }
-function basculerFavori(q) {
+// Favori = { n: nom affiché, f: arrêt précis } (les anciens favoris sont de simples textes)
+const nomFavori = x => typeof x === "string" ? x : x.n;
+const estFavori = n => lireListe("favoris").some(x => nomFavori(x) === n);
+function basculerFavori(n, precis) {
   const l = lireListe("favoris");
-  ecrireListe("favoris", l.includes(q) ? l.filter(x => x !== q) : [...l, q].slice(-12));
+  ecrireListe("favoris", estFavori(n) ? l.filter(x => nomFavori(x) !== n) : [...l, precis ? { n, f: precis } : n].slice(-12));
   montrerRecents();
 }
 function montrerRecents() {
   // Favoris : gros boutons ⭐ (✕ pour retirer)
   $("favoris").innerHTML = "";
-  for (const q of lireListe("favoris")) {
+  for (const x of lireListe("favoris")) {
     // Petites pastilles comme les anciens « derniers arrêts » ; on retire un favori avec l'étoile de son résultat
+    const q = nomFavori(x);
     const b = document.createElement("button"); b.textContent = "⭐ " + q;
-    b.onclick = () => { $("question").value = q; chercher(q); };
+    b.onclick = () => { $("question").value = q; chercher(q, x.f ? { force: x.f } : {}); };
     $("favoris").appendChild(b);
   }
   // Les derniers arrêts consultés ne sont plus affichés : seuls les favoris restent à l'accueil
@@ -1176,6 +1222,11 @@ function boutonItineraire(position, nom) {
 }
 
 // ===================== Autour de moi =====================
+// Sans commune dans les données : on situe un arrêt par son voisin le plus proche (« près de Mairie »)
+function voisinDe(liste, a, b, nom) {
+  const v = liste.filter(x => x[1] !== nom).sort((x, y) => distance(a, b, x[3], x[4]) - distance(a, b, y[3], y[4]))[0];
+  return v ? (/^[AEIOUYH]/.test(normaliser(v[1])) ? "près d'" : "près de ") + titre(v[1]) : "";
+}
 const distance = (a, b, c, d) => { // mètres entre deux points GPS
   const R = 6371000, r = x => x * Math.PI / 180;
   const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;

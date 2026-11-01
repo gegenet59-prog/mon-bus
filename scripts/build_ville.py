@@ -72,6 +72,34 @@ def services_actifs(z, jours):
     return actifs
 
 
+def completer_communes(arrets):
+    """Arrêts du même nom à plus d'1 km l'un de l'autre (Wagner à Lille ET à Wattrelos) sans commune dans les données :
+    on demande la commune à l'API officielle geo.api.gouv.fr (par position). En cas d'échec, l'appli dit « près de … »."""
+    import urllib.request
+    par_nom = defaultdict(list)
+    for a in arrets:
+        par_nom[a[1]].append(a)
+    a_faire = [a for liste in par_nom.values() if len(liste) > 1
+               and any(metres(x[3], x[4], y[3], y[4]) > 1000 for x in liste for y in liste)
+               for a in liste if not a[2]]
+    trouves = echecs = 0
+    for a in a_faire:
+        if echecs >= 5:      # API injoignable : on n'insiste pas
+            break
+        try:
+            url = f"https://geo.api.gouv.fr/communes?lat={a[3]}&lon={a[4]}&fields=nom&format=json"
+            with urllib.request.urlopen(url, timeout=10) as r:
+                rep = json.load(r)
+            if rep:
+                a[2] = rep[0]["nom"]
+                trouves += 1
+            echecs = 0
+        except Exception:
+            echecs += 1
+    if a_faire:
+        print(f"  communes des arrêts homonymes : {trouves}/{len(a_faire)} trouvées (geo.api.gouv.fr)")
+
+
 def main():
     ville, source = sys.argv[1], sys.argv[2]
     sortie = os.path.join(sys.argv[3] if len(sys.argv) > 3 else "horaires", ville.lower())
@@ -195,6 +223,7 @@ def main():
     arrets = [[sur[pid], infos[pid][0], infos[pid][1],
                round(sum(p[0] for p in positions[pid]) / len(positions[pid]), 5),
                round(sum(p[1] for p in positions[pid]) / len(positions[pid]), 5)] for pid in par_arret]
+    completer_communes(arrets)
     with open(os.path.join(sortie, "stations.json"), "w", encoding="utf-8") as f:
         json.dump({"genere": datetime.now(PARIS).isoformat(timespec="minutes"), "stations": stations},
                   f, ensure_ascii=False, separators=(",", ":"))
