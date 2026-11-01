@@ -34,7 +34,7 @@ export default {
     if (nom === "lyon" || nom === "lyon-test") {
       if (!env.GRANDLYON_USER || !env.GRANDLYON_MDP) return new Response("Identifiants Grand Lyon absents", { status: 500, headers: ENTETES_CORS });
       const auth = "Basic " + btoa(`${env.GRANDLYON_USER}:${env.GRANDLYON_MDP}`);
-      const base = "https://download.data.grandlyon.com/ws/rdata/tcl_sytral.tclpassagearret/all.json";
+      const base = "https://data.grandlyon.com/fr/datapusher/ws/rdata/tcl_sytral.tclpassagearret/all.json";
       const arrets = (url.searchParams.get("arret") || "").split(",").filter(a => /^\d{1,6}$/.test(a)).slice(0, 12);
       if (nom === "lyon-test") {
         const r = await fetch(`${base}?maxfeatures=3`, { headers: { Authorization: auth } });
