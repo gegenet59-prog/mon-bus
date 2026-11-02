@@ -106,6 +106,13 @@
   .carteIti.ouverte .etapesIti { display:block; }
   .etapesIti li { margin-bottom:10px; }
   .etapesIti .num { display:inline-block; min-width:40px; font-size:14px; vertical-align:middle; }
+  .quandIti { display:flex; gap:6px; margin-top:10px; }
+  .quandIti button { flex:1; padding:10px; font-size:15px; background:#fff; color:var(--texte); border:1px solid #d5d9e6; }
+  .quandIti button.actif { background:var(--indigo); color:#fff; border-color:var(--indigo); }
+  #itiHeure { width:100%; box-sizing:border-box; margin-top:8px; }
+  .rouleIti { color:#1a7f37; font-size:13px; font-weight:600; white-space:nowrap; }
+  .dortIti { color:#7a2048; font-size:13px; font-weight:600; }
+  .dortCarte { opacity:.92; border:1px dashed #c9b3c0; }
   .arretIti { background:none; color:var(--bleu); padding:0; font-size:14px; font-weight:600; text-decoration:underline; }
   /* Pannes métro / tram de la ville (bandeau d'accueil) et réglage des alertes */
   .entete-droite { display:flex; align-items:center; gap:8px; }
@@ -141,7 +148,7 @@
     <button id="gps" class="tuile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span>Autour de moi</span></button>
     <button id="micro" class="tuile" aria-label="Parler : reste appuyé pour dire l'arrêt et la ligne"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span><span id="microTexte">Parler</span><small id="microAide">Reste appuyé</small></span></button>
   </div>
-  <button id="itiBtn" class="bandeauIti"><span>🧭 Itinéraire</span><small>Aller de A à B ›</small></button>
+  <button id="itiBtn" class="bandeauIti"><span>🧭 Itinéraire</span><span>›</span></button>
   <div id="pannes"></div>
   <div id="proches"></div>
   <form id="formulaire">
@@ -160,6 +167,8 @@
       <button id="itiInverser" aria-label="Inverser départ et arrivée">⇅</button>
       <input id="itiArrivee" placeholder="Arrivée : arrêt ou adresse" autocomplete="off">
     </div>
+    <div class="quandIti"><button id="itiMaintenant" class="actif">Partir maintenant</button><button id="itiPlusTard">Partir à…</button></div>
+    <input id="itiHeure" type="datetime-local" hidden>
     <div id="itiSuggestions"></div>
     <button id="itiOk">Chercher l'itinéraire</button>
     <div id="itiResultats"></div>
@@ -1523,13 +1532,16 @@ majCloche();
 try { const v = new URLSearchParams(location.search).get("ville"); if (v && VILLES.some(x => x.id === v && x.dispo)) VILLE = v; } catch {}
 
 // ===================== Itinéraire (de A à B) =====================
-// Le plan du réseau (horaires/<ville>/reseau.json, refait chaque nuit) donne la suite des arrêts de chaque ligne et les temps
-// entre arrêts. Les horaires prévus servent seulement à écarter les lignes qui ne roulent pas et à estimer l'attente.
-// Calcul sur le téléphone : plus court chemin (Dijkstra), relancé avec plusieurs critères pour proposer 2 à 4 options.
-const ITI = { ville: null, reseau: null, arrets: null, parArret: null, voisins: null, depart: null, arrivee: null };
+// Le plan du réseau (horaires/<ville>/reseau.json, refait chaque nuit) donne, pour toute la saison : la suite des arrêts
+// de chaque ligne, les temps entre arrêts et les heures de départ de chaque trajet selon le jour.
+// Calcul sur le téléphone (Dijkstra « horaire ») : on part à l'heure choisie, on prend le prochain bus à chaque arrêt.
+// Deux sortes de résultats : les trajets qui roulent à l'heure choisie (plusieurs critères), puis le trajet « habituel »
+// (le plus court sur le plan, sans regarder les horaires) avec, pour chaque ligne, si elle roule ou quand elle reprend.
+const ITI = { ville: null, reseau: null, arrets: null, parArret: null, voisins: null, depart: null, arrivee: null, quand: null };
 const VITESSE_MARCHE = 75;   // mètres par minute (4,5 km/h), détours compris via le facteur 1,25
 const minutesMarche = m => Math.max(1, Math.round(m * 1.25 / VITESSE_MARCHE));
 const dossierVille = v => v === "LILLE" ? "lille" : VILLES.find(x => x.id === v)?.gtfs;
+const cleJour = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 
 async function chargerReseau() {
   if (ITI.ville === VILLE && ITI.reseau) return true;
@@ -1537,14 +1549,17 @@ async function chargerReseau() {
   if (!d) return false;
   const [reseau, arrets] = await Promise.all([fetch(`horaires/${d}/reseau.json`).then(r => r.ok ? r.json() : null).catch(() => null),
                                              fetch(`horaires/${d}/arrets.json`).then(r => r.json()).catch(() => [])]);
-  if (!reseau) return false;
+  if (!reseau || !reseau.jours) return false;
   const pos = {};
   for (const [id, nom, commune, la, lo] of arrets) pos[id] = { id, nom, commune, la, lo };
   const parArret = {};
-  reseau.p.forEach((p, i) => p[2].forEach((id, k) => (parArret[id] ??= []).push([i, k])));
+  reseau.p.forEach((p, i) => {
+    p.cumul = [0]; for (const t of p[3]) p.cumul.push(p.cumul.at(-1) + t);   // minutes depuis le 1er arrêt
+    p[2].forEach((id, k) => (parArret[id] ??= []).push([i, k]));
+  });
   // voisins à pied (correspondance à moins de 350 m), avec une grille pour aller vite
-  const grille = {}, cle = (la, lo) => `${Math.floor(la / 0.004)}:${Math.floor(lo / 0.006)}`;
-  for (const a of Object.values(pos)) (grille[cle(a.la, a.lo)] ??= []).push(a);
+  const grille = {};
+  for (const a of Object.values(pos)) (grille[`${Math.floor(a.la / 0.004)}:${Math.floor(a.lo / 0.006)}`] ??= []).push(a);
   const voisins = {};
   for (const a of Object.values(pos)) {
     const gi = Math.floor(a.la / 0.004), gj = Math.floor(a.lo / 0.006), l = [];
@@ -1556,35 +1571,37 @@ async function chargerReseau() {
       }
     voisins[a.id] = l;
   }
-  Object.assign(ITI, { ville: VILLE, reseau, arrets: pos, parArret, voisins, grille, cleGrille: cle });
+  Object.assign(ITI, { ville: VILLE, reseau, arrets: pos, parArret, voisins });
   return true;
 }
 
-// Arrêts à moins de `rayon` mètres d'un point
 function arretsAutour(la, lo, rayon) {
   const res = [];
   for (const a of Object.values(ITI.arrets)) { const m = distance(la, lo, a.la, a.lo); if (m < rayon) res.push([a.id, m]); }
   return res.sort((x, y) => x[1] - y[1]);
 }
 
-// Trajets par heure d'un parcours, maintenant (et l'heure suivante) -> attente moyenne en minutes, ou null s'il ne roule pas
-function attenteParcours(p) {
-  const n = new Date(), cle = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  const h = n.getHours(), suiv = new Date(n.getTime() + 3600000);
-  const ici = (p[4][cle(n)] || [])[h] || 0, apres = (p[4][cle(suiv)] || [])[suiv.getHours()] || 0;
-  const nb = n.getMinutes() < 30 ? ici + apres / 2 : ici / 2 + apres;   // départs dans l'heure qui vient (environ)
-  if (nb < 0.5) return null;
-  return Math.min(30, 30 / nb);   // la moitié de l'intervalle entre deux passages
+// Départs (en minutes depuis minuit du jour choisi) de chaque parcours, la veille, le jour même et les 2 jours suivants
+function preparerHoraires(depart) {
+  const R = ITI.reseau, minuit = new Date(depart.getFullYear(), depart.getMonth(), depart.getDate());
+  const jours = [-1, 0, 1, 2].map(o => [o, R.jours[cleJour(new Date(minuit.getTime() + o * 86400000))] || []]);
+  const cache = {};
+  return pi => cache[pi] ??= (() => {
+    const p = R.p[pi], l = [];
+    for (const [o, groupes] of jours) for (const g of groupes) for (const m of p[4][g] || []) l.push(m + o * 1440);
+    return l.sort((a, b) => a - b);
+  })();
 }
+const premierApres = (l, t) => { let a = 0, b = l.length; while (a < b) { const m = (a + b) >> 1; if (l[m] < t) a = m + 1; else b = m; } return a < l.length ? l[a] : null; };
 
-// Plus court chemin. sources / cibles : { idArret: minutes à pied }. Profil : pénalités de changement et de marche.
-function calculerIti(sources, cibles, profil) {
-  const R = ITI.reseau, attentes = R.p.map(attenteParcours);
-  const lab = {};          // id -> meilleure étiquette { cout, duree, montees, prec, etape, apresMarche }
-  const file = [];         // file de priorité simple (tableau trié par insertion binaire)
+// Plus court chemin. sources / cibles : { idArret: minutes à pied }. t0 : minutes depuis minuit du jour choisi.
+// horaires(pi) -> départs triés ; null = mode « plan seul » (attente fixe de 4 min, toutes les lignes)
+function calculerIti(sources, cibles, profil, t0, horaires) {
+  const R = ITI.reseau, lab = {}, file = [];
   const pousser = e => { let a = 0, b = file.length; while (a < b) { const m = (a + b) >> 1; if (file[m].cout < e.cout) a = m + 1; else b = m; } file.splice(a, 0, e); };
   const mettre = (id, e) => { const k = id + (e.apresMarche ? "|m" : ""); if (lab[k] && lab[k].cout <= e.cout) return; lab[k] = e; pousser({ ...e, id, k }); };
-  for (const [id, m] of Object.entries(sources)) mettre(id, { cout: m * profil.marche, duree: m, montees: 0, prec: null, etape: m ? { type: "marche", min: m, a: id } : null, apresMarche: true });
+  for (const [id, m] of Object.entries(sources))
+    mettre(id, { cout: m * profil.marche, t: t0 + m, montees: 0, prec: null, etape: m ? { type: "marche", min: m, a: id } : null, apresMarche: true });
   const vus = new Set();
   let meilleur = null;
   while (file.length) {
@@ -1593,43 +1610,66 @@ function calculerIti(sources, cibles, profil) {
     vus.add(e.k);
     if (meilleur && e.cout >= meilleur.cout) break;
     if (e.id in cibles) {
-      const m = cibles[e.id], fin = { cout: e.cout + m * profil.marche, duree: e.duree + m, prec: e, etape: m ? { type: "marche", min: m, de: e.id, fin: true } : null };
+      const m = cibles[e.id], fin = { cout: e.cout + m * profil.marche, t: e.t + m, prec: e, etape: m ? { type: "marche", min: m, de: e.id, fin: true } : null };
       if (!meilleur || fin.cout < meilleur.cout) meilleur = fin;
     }
-    // à pied vers un arrêt voisin (pas deux marches de suite)
     if (!e.apresMarche) for (const [v, m] of ITI.voisins[e.id] || []) {
-      const t = minutesMarche(m);
-      mettre(v, { cout: e.cout + t * profil.marche + 1, duree: e.duree + t, montees: e.montees, prec: e, etape: { type: "marche", min: t, de: e.id, a: v }, apresMarche: true });
+      const w = minutesMarche(m);
+      mettre(v, { cout: e.cout + w * profil.marche + 1, t: e.t + w, montees: e.montees, prec: e, etape: { type: "marche", min: w, de: e.id, a: v }, apresMarche: true });
     }
-    // monter dans une ligne qui passe ici
     for (const [pi, k] of ITI.parArret[e.id] || []) {
-      const p = R.p[pi], att = attentes[pi];
-      if (att === null || k === p[2].length - 1) continue;
+      const p = R.p[pi];
+      if (k === p[2].length - 1) continue;
       if (e.etape?.type === "ligne" && R.p[e.etape.p][0] === p[0]) continue;   // pas remonter dans la même ligne
-      let cout = e.cout + att * profil.attente + (e.montees ? profil.changement : 0), duree = e.duree + att;
+      const pret = e.t + (e.montees ? 1 : 0);                                   // 1 min pour changer de quai
+      let dep;                                                                 // heure de départ du 1er arrêt du trajet pris
+      if (horaires) {
+        const d = premierApres(horaires(pi), pret - p.cumul[k]);
+        if (d === null || d + p.cumul[k] - pret > 720) continue;               // rien dans les 12 h
+        dep = d;
+      } else dep = pret + 4 - p.cumul[k];
+      const passage = dep + p.cumul[k];
       for (let j = k + 1; j < p[2].length; j++) {
-        cout += p[3][j - 1]; duree += p[3][j - 1];
-        mettre(p[2][j], { cout, duree, montees: e.montees + 1, prec: e, apresMarche: false,
-                          etape: { type: "ligne", p: pi, de: e.id, a: p[2][j], arrets: j - k, min: Math.round(duree - e.duree - att), attente: att } });
+        const t = dep + p.cumul[j];
+        mettre(p[2][j], { cout: e.cout + (t - e.t) + (e.montees ? profil.changement : 0), t, montees: e.montees + 1, prec: e, apresMarche: false,
+                          etape: { type: "ligne", p: pi, de: e.id, a: p[2][j], arrets: j - k, passage, arrivee: t } });
       }
     }
   }
   if (!meilleur) return null;
   const etapes = [];
   for (let x = meilleur; x; x = x.prec) if (x.etape) etapes.unshift(x.etape);
-  return { duree: Math.round(meilleur.duree), etapes,
-           changements: Math.max(0, etapes.filter(s => s.type === "ligne").length - 1),
+  return { etapes, changements: Math.max(0, etapes.filter(s => s.type === "ligne").length - 1),
            marche: etapes.filter(s => s.type === "marche").reduce((t, s) => t + s.min, 0) };
 }
 
+// Rejoue un trajet à l'heure choisie : heure de chaque bus, ou « ne roule pas, reprend à… »
+function chronometrer(o, t0, horaires) {
+  const R = ITI.reseau;
+  let t = t0;
+  for (const s of o.etapes) {
+    if (s.type === "marche") { s.debut = t; t += s.min; continue; }
+    const p = R.p[s.p], k = p[2].indexOf(s.de), j = p[2].indexOf(s.a, k + 1);
+    const pret = t + (s !== o.etapes.find(x => x.type === "ligne") ? 1 : 0);
+    const d = premierApres(horaires(s.p), pret - p.cumul[k]);
+    if (d === null) { s.passage = null; s.arrivee = null; t += p.cumul[j] - p.cumul[k] + 4; continue; }
+    s.passage = d + p.cumul[k]; s.arrivee = d + p.cumul[j]; s.attente = s.passage - pret;
+    s.dort = s.attente > 60;      // plus d'une heure d'attente : « ne roule pas à cette heure »
+    t = s.arrivee;
+  }
+  o.arrivee = t;
+  o.duree = Math.round(t - t0);
+  o.premierDepart = o.etapes.find(x => x.type === "ligne")?.passage ?? null;
+  return o;
+}
+
 const PROFILS = [
-  { nom: "Conseillé", icone: "⭐", changement: 5, marche: 1.5, attente: 1 },
-  { nom: "Le plus rapide", icone: "⚡", changement: 1, marche: 1, attente: 1 },
-  { nom: "Moins de changements", icone: "🔁", changement: 25, marche: 1.5, attente: 1 },
-  { nom: "Moins de marche", icone: "🚶", changement: 5, marche: 4, attente: 1 },
+  { nom: "Conseillé", icone: "⭐", changement: 5, marche: 1.5 },
+  { nom: "Le plus rapide", icone: "⚡", changement: 1, marche: 1 },
+  { nom: "Moins de changements", icone: "🔁", changement: 25, marche: 1.5 },
+  { nom: "Moins de marche", icone: "🚶", changement: 5, marche: 4 },
 ];
 
-// Lieu choisi -> minutes à pied vers les arrêts proches
 function accesLieu(lieu) {
   const res = {};
   if (lieu.ids?.length) {
@@ -1650,20 +1690,36 @@ const pastilleLigne = l => {
   return `<span class="num" style="background:#${couleur || "1e2761"};color:#${texte || "FFFFFF"}"><small>${mode}</small>${echapper(affiche)}</span>`;
 };
 const nomArret = id => titre(ITI.arrets[id]?.nom || "?");
+// minutes depuis minuit du jour choisi -> « 00:18 », « demain 05:42 »
+function heureIti(min) {
+  const base = ITI.quand || new Date(), d = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, Math.round(min));
+  const jours = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(new Date().setHours(0, 0, 0, 0))) / 86400000);
+  return (jours === 1 ? "demain " : jours > 1 ? d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) + " " : "") + hhmm(d);
+}
 
 function ouvrirItineraire() {
   document.body.classList.add("iti");
   window.scrollTo(0, 0);
   if (!ITI.depart) ITI.depart = { nom: "📍 Ma position", position: true };
   $("itiDepart").value = ITI.depart.nom; $("itiArrivee").value = ITI.arrivee?.nom || "";
-  $("itiResultats").innerHTML = "";
-  if (VILLE === "PARIS") {
-    $("itiResultats").innerHTML = `<p class="aide">Pour Paris, l'itinéraire passe par Google Maps (le plan complet de l'Île-de-France est trop gros pour le téléphone).</p>`;
-  }
+  majQuand();
+  $("itiResultats").innerHTML = VILLE === "PARIS"
+    ? `<p class="aide">Pour Paris, l'itinéraire passe par Google Maps (le plan complet de l'Île-de-France est trop gros pour le téléphone).</p>` : "";
   history.pushState({ iti: true }, "");
 }
 function fermerItineraire() { document.body.classList.remove("iti"); $("itiSuggestions").innerHTML = ""; }
 window.addEventListener("popstate", () => { if (document.body.classList.contains("iti")) fermerItineraire(); });
+
+// « Partir maintenant » / « Partir à… »
+function majQuand() {
+  const plus = !!ITI.quand;
+  $("itiMaintenant").classList.toggle("actif", !plus); $("itiPlusTard").classList.toggle("actif", plus);
+  $("itiHeure").hidden = !plus;
+  if (plus) { const d = ITI.quand, v = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); if ($("itiHeure").value !== v) $("itiHeure").value = v; }
+}
+$("itiMaintenant").onclick = () => { ITI.quand = null; majQuand(); if (ITI.depart && ITI.arrivee) lancerItineraire(); };
+$("itiPlusTard").onclick = () => { ITI.quand ??= new Date(Date.now() + 3600000); majQuand(); };
+$("itiHeure").onchange = () => { const d = new Date($("itiHeure").value); if (!isNaN(d)) { ITI.quand = d; if (ITI.depart && ITI.arrivee) lancerItineraire(); } };
 
 let MINUTERIE_ADRESSE = null;
 async function suggerer(champ) {
@@ -1685,7 +1741,6 @@ async function suggerer(champ) {
     }
   }
   afficherSuggestions(choix);
-  // adresses (service officiel de l'État), après une petite pause de frappe
   clearTimeout(MINUTERIE_ADRESSE);
   if (q.length >= 4 && /\d|rue|avenue|bd|boulevard|place|chemin|allée|route|impasse|quai/i.test(q)) MINUTERIE_ADRESSE = setTimeout(async () => {
     const [la, lo] = POSITION || villeActuelle().centre || [];
@@ -1713,7 +1768,6 @@ function afficherSuggestions(choix) {
   }
 }
 
-// Lieu choisi -> position / arrêts (une recherche de favori ancien style passe par le nom)
 async function preparerLieu(l) {
   if (l.position) {
     if (!POSITION) POSITION = await new Promise((ok, ko) => navigator.geolocation.getCurrentPosition(p => ok([p.coords.latitude, p.coords.longitude]), ko, { timeout: 10000, maximumAge: 60000 }));
@@ -1722,7 +1776,6 @@ async function preparerLieu(l) {
   if (l.force?.ids || l.force?.id) return { ids: l.force.ids || [l.force.id] };
   if (l.ids) return { ids: l.ids };
   if (l.la) return { la: l.la, lo: l.lo };
-  // texte tapé sans choisir : le nom d'arrêt le plus proche
   const n = meilleurNom([...new Set(Object.values(ITI.arrets).map(a => a.nom))], analyser(l.recherche || l.nom).arret);
   return n ? { ids: Object.values(ITI.arrets).filter(a => a.nom === n).map(a => a.id) } : null;
 }
@@ -1741,22 +1794,30 @@ async function lancerItineraire() {
   if (!a || !b) { zone.innerHTML = `<p class="aide">Je ne trouve pas ${!a ? "le départ" : "l'arrivée"}. Choisis-le dans la liste.</p>`; return; }
   const sources = accesLieu(a), cibles = accesLieu(b);
   if (!Object.keys(sources).length || !Object.keys(cibles).length) { zone.innerHTML = `<p class="aide">Aucun arrêt près ${!Object.keys(sources).length ? "du départ" : "de l'arrivée"}.</p>` + lienGoogle(); return; }
-  // à pied directement, si c'est tout près
   const pa = a.la ? [a.la, a.lo] : [ITI.arrets[a.ids[0]].la, ITI.arrets[a.ids[0]].lo];
   const pb = b.la ? [b.la, b.lo] : [ITI.arrets[b.ids[0]].la, ITI.arrets[b.ids[0]].lo];
   const aPied = minutesMarche(distance(...pa, ...pb));
+  const quand = ITI.quand || new Date(), t0 = quand.getHours() * 60 + quand.getMinutes();
+  const horaires = preparerHoraires(quand);
+  const signature = r => r.etapes.filter(s => s.type === "ligne").map(s => `${ITI.reseau.p[s.p][0]}@${s.de}>${s.a}`).join(",");
+  // 1) trajets qui roulent à l'heure choisie, selon chaque critère
   const options = [], vus = new Set();
   for (const pr of PROFILS) {
-    const r = calculerIti(sources, cibles, pr);
+    const r = calculerIti(sources, cibles, pr, t0, horaires);
     if (!r) continue;
-    const sig = r.etapes.filter(s => s.type === "ligne").map(s => `${ITI.reseau.p[s.p][0]}@${s.de}>${s.a}`).join(",");
+    const sig = signature(r);
     if (vus.has(sig)) { options.find(o => o.sig === sig).noms.push(pr.icone + " " + pr.nom); continue; }
     vus.add(sig);
-    options.push({ ...r, sig, noms: [pr.icone + " " + pr.nom] });
+    options.push(chronometrer({ ...r, sig, noms: [pr.icone + " " + pr.nom] }, t0, horaires));
   }
-  if (!options.length) { zone.innerHTML = `<p class="aide">Pas d'itinéraire en transports en commun pour l'instant (lignes qui ne roulent pas à cette heure ?).</p>` + lienGoogle(); return; }
+  // 2) trajet habituel (plan seul) : toujours proposé, avec l'état de chaque ligne à l'heure choisie
+  const habituel = calculerIti(sources, cibles, PROFILS[0], t0, null);
+  if (habituel && !vus.has(signature(habituel))) options.push(chronometrer({ ...habituel, sig: signature(habituel), noms: ["🗺️ Trajet habituel"], habituel: true }, t0, horaires));
+  else if (habituel) options.find(o => o.sig === signature(habituel))?.noms.push("🗺️ Trajet habituel");
+  if (!options.length) { zone.innerHTML = `<p class="aide">Aucune ligne ne relie ces deux endroits.</p>` + lienGoogle(pa, pb); return; }
+  options.sort((x, y) => (x.habituel - y.habituel) || 0);
   zone.innerHTML = (aPied <= 20 ? `<p class="aide">🚶 À pied : environ ${aPied} min.</p>` : "")
-    + options.map((o, i) => carteIti(o, i)).join("") + lienGoogle(pa, pb);
+    + options.map((o, i) => carteIti(o, i, t0)).join("") + lienGoogle(pa, pb);
   zone.querySelectorAll(".carteIti").forEach(c => c.onclick = e => { if (!e.target.closest(".arretIti")) c.classList.toggle("ouverte"); });
   zone.querySelectorAll(".arretIti").forEach(btn => btn.onclick = () => {
     const id = btn.dataset.id, nom = ITI.arrets[id].nom;
@@ -1764,45 +1825,29 @@ async function lancerItineraire() {
     $("question").value = titre(nom);
     chercher(titre(nom), { force: { nom, ids: [id], id, commune: "" } });
   });
-  options.forEach((o, i) => prochainDepart(o, i));
 }
 
-function carteIti(o, i) {
+function carteIti(o, i, t0) {
   const R = ITI.reseau, lignes = o.etapes.filter(s => s.type === "ligne");
+  const dort = lignes.some(s => s.dort || s.passage === null);
+  const etat = s => s.passage === null ? `<span class="dortIti">🌙 ne roule pas ces jours-ci</span>`
+    : s.dort ? `<span class="dortIti">🌙 ne roule pas à cette heure · reprend ${heureIti(s.passage)}</span>`
+    : `<span class="rouleIti">✅ ${heureIti(s.passage)}</span>`;
   const etapes = o.etapes.map(s => {
     const bouton = id => `<button class="arretIti" data-id="${id}">${echapper(nomArret(id))}</button>`;
     if (s.type === "marche") return `<li>🚶 ${s.min} min à pied${s.a && !s.fin ? ` jusqu'à ${bouton(s.a)}` : s.fin ? " jusqu'à l'arrivée" : ""}</li>`;
     const p = R.p[s.p];
-    return `<li>${pastilleLigne(R.l[p[0]])} direction <b>${echapper(titre(p[1]))}</b><br>Monte à ${bouton(s.de)}, descends à ${bouton(s.a)}
-            <small>(${s.arrets} arrêt${s.arrets > 1 ? "s" : ""}, ${s.min} min)</small></li>`;
+    return `<li>${pastilleLigne(R.l[p[0]])} direction <b>${echapper(titre(p[1]))}</b> ${etat(s)}<br>Monte à ${bouton(s.de)}, descends à ${bouton(s.a)}
+            <small>(${s.arrets} arrêt${s.arrets > 1 ? "s" : ""}${s.arrivee !== null ? `, arrivée ${heureIti(s.arrivee)}` : ""})</small></li>`;
   }).join("");
-  const noms = o.noms.length >= 3 ? ["⭐ Le meilleur trajet"] : o.noms;   // tous les critères donnent le même : inutile de les lister
-  return `<div class="carteIti${i === 0 ? " ouverte" : ""}"><div class="enteteIti"><span class="nomsIti">${noms.join(" · ")}</span>
-    <span class="dureeIti">≈ ${o.duree} min</span></div>
+  const noms = o.noms.length >= 3 && !o.habituel ? ["⭐ Le meilleur trajet"] : o.noms;
+  const depart = o.etapes[0]?.type === "marche" ? o.premierDepart - o.etapes[0].min : o.premierDepart;
+  return `<div class="carteIti${i === 0 ? " ouverte" : ""}${dort ? " dortCarte" : ""}"><div class="enteteIti"><span class="nomsIti">${noms.join(" · ")}</span>
+    <span class="dureeIti">${dort ? "" : `${o.duree} min`}</span></div>
     <div class="lignesIti">${lignes.map(s => pastilleLigne(R.l[R.p[s.p][0]])).join(`<span class="fleche">›</span>`)}</div>
-    <div class="aide" style="margin:6px 0 0">${o.changements ? `${o.changements} changement${o.changements > 1 ? "s" : ""}` : "Direct"}${o.marche ? ` · ${o.marche} min à pied` : ""}
-      <span id="depIti${i}"></span></div>
+    <div class="aide" style="margin:6px 0 0">${dort ? "🌙 Une ligne ne roule pas à cette heure-là"
+      : `Départ ${heureIti(Math.max(t0, depart ?? t0))} · arrivée ${Math.floor(o.arrivee / 1440) === Math.floor(Math.max(t0, depart ?? t0) / 1440) ? heureIti(o.arrivee).split(" ").pop() : heureIti(o.arrivee)}`} · ${o.changements ? `${o.changements} changement${o.changements > 1 ? "s" : ""}` : "direct"}${o.marche ? ` · ${o.marche} min à pied` : ""}</div>
     <ol class="etapesIti">${etapes}</ol></div>`;
-}
-
-// Prochain départ prévu de la première ligne, lu dans le fichier d'horaires de l'arrêt
-async function prochainDepart(o, i) {
-  const s = o.etapes.find(x => x.type === "ligne");
-  if (!s) return;
-  const p = ITI.reseau.p[s.p], code = ITI.reseau.l[p[0]][0];
-  const f = await chargerCompact(dossierVille(VILLE), s.de);
-  if (!f) return;
-  const maintenant = new Date(), dans = [];
-  for (const [d, liste] of Object.entries(f.j)) {
-    const minuit = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
-    for (const [min, li, si] of liste) {
-      if (f.l[li][0] !== code || normaliser(f.s[si]) !== p[1]) continue;
-      const h = new Date(minuit.getTime() + min * 60000);
-      if (h >= maintenant) dans.push(h);
-    }
-  }
-  dans.sort((x, y) => x - y);
-  if (dans.length && $(`depIti${i}`)) $(`depIti${i}`).textContent = ` · prochain départ ${hhmm(dans[0])} (dans ${Math.max(0, Math.round((dans[0] - maintenant) / 60000))} min, prévu)`;
 }
 
 function lienGoogle(pa, pb) {

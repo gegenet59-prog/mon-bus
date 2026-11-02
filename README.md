@@ -44,5 +44,5 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 
 Bandeau « 🧭 Itinéraire » à l'accueil → écran séparé (départ, arrivée : arrêt, favori, adresse ou ma position).
 `build_ville.py` écrit chaque nuit `reseau.json` (suite des arrêts de chaque ligne, temps entre arrêts, nombre de trajets par heure).
-Le téléphone calcule le chemin (Dijkstra) avec 4 critères (conseillé, plus rapide, moins de changements, moins de marche) ;
+Toute la saison : départs de chaque trajet par « groupe de jours ». Calcul horaire sur le téléphone (Dijkstra), 4 critères + trajet habituel avec l'état de chaque ligne ; partir maintenant ou à une date et heure.
 les lignes qui ne roulent pas à l'heure demandée sont écartées. Paris : lien Google Maps.

@@ -75,25 +75,28 @@ def services_actifs(z, jours):
 SORTIE = ""
 
 
-def construire_reseau(ordre, trajets, parent_de, sur, lignes, stops, aujourd_hui):
-    """Plan du réseau pour les itinéraires (sans horaires précis) :
+def construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes, stops):
+    """Plan du réseau pour les itinéraires, valable toute la saison :
     {"l": [[code, type, couleur, couleur texte], ...],
-     "p": [[n° ligne, direction, [arrêts dans l'ordre], [minutes entre deux arrêts], {"AAAAMMJJ": [trajets par heure x24]}], ...]}
-    Un « parcours » = une ligne + une suite d'arrêts ; les trajets identiques sont regroupés et comptés par heure de départ."""
-    jours = {(aujourd_hui + timedelta(days=d)).strftime("%Y%m%d"): d for d in (-1, 0, 1, 2)}
+     "jours": {"AAAAMMJJ": [n° des groupes qui roulent ce jour-là]},
+     "p": [[n° ligne, direction, [arrêts], [minutes entre deux arrêts], {"n° groupe": [départs du 1er arrêt en minutes]}], ...]}
+    Groupe = services qui roulent les mêmes jours. Chaque trajet n'est écrit qu'une fois : petit fichier pour toute la saison.
+    Un « parcours » = une ligne + une suite d'arrêts ; l'heure de passage à un arrêt = départ + somme des temps."""
     tables_l, idx_l, parcours = [], {}, {}
     for t, liste in ordre.items():
-        route, direction, dates = trajets[t]
-        suite, temps, prec = [], [], None
+        route, direction, service = tous[t]
+        suite, temps, prec, depart = [], [], None, None
         for _, sid, mn in liste:
             pid = parent_de.get(sid)
             if pid is None or (suite and suite[-1] == sur[pid]):
                 continue
             if suite:
                 temps.append(max(0.5, (mn - prec) if (mn is not None and prec is not None) else 2))
+            else:
+                depart = mn
             suite.append(sur[pid])
             prec = mn
-        if len(suite) < 2:
+        if len(suite) < 2 or depart is None:
             continue
         if route not in idx_l:
             l = lignes.get(route, [route, 3, "", "", route])
@@ -103,16 +106,12 @@ def construire_reseau(ordre, trajets, parent_de, sur, lignes, stops, aujourd_hui
         cle = (route, tuple(suite))
         p = parcours.get(cle)
         if p is None:
-            p = parcours[cle] = [idx_l[route], direction, suite, [round(x, 1) for x in temps], {}]
-        depart = liste[0][2] or 0
-        for d in dates:
-            # trajet après minuit (25h…) : compté le lendemain
-            jd = datetime.strptime(d, "%Y%m%d") + timedelta(days=depart // 1440)
-            cled = jd.strftime("%Y%m%d")
-            if cled not in jours:
-                continue
-            p[4].setdefault(cled, [0] * 24)[(depart % 1440) // 60] += 1
-    return {"l": tables_l, "p": list(parcours.values())}
+            p = parcours[cle] = [idx_l[route], direction, suite, [round(x, 1) for x in temps], defaultdict(list)]
+        p[4][svc_types[service]].append(depart)
+    for p in parcours.values():
+        p[4] = {str(k): sorted(v) for k, v in p[4].items()}
+    return {"l": tables_l, "jours": jours_type, "p": list(parcours.values())}
+
 
 
 def completer_communes(arrets):
@@ -172,6 +171,26 @@ def main():
     hier = (aujourd_hui - timedelta(days=1)).strftime("%Y%m%d")
     jours = {(aujourd_hui + timedelta(days=d)).strftime("%Y%m%d") for d in (-1, 0, 1)}
     actifs = services_actifs(z, jours)
+    # Saison complète (pour les itinéraires) : chaque date reçoit un « type de jour » (même ensemble de services)
+    fins = [l["end_date"] for l in lire(z, "calendar.txt")] + [l["date"] for l in lire(z, "calendar_dates.txt")]
+    derniere = min(max(fins) if fins else aujourd_hui.strftime("%Y%m%d"), (aujourd_hui + timedelta(days=400)).strftime("%Y%m%d"))
+    saison, d = [], aujourd_hui - timedelta(days=1)
+    while d.strftime("%Y%m%d") <= derniere:
+        saison.append(d.strftime("%Y%m%d")); d += timedelta(days=1)
+    par_date = defaultdict(set)
+    for svc, ds in services_actifs(z, set(saison)).items():
+        for x in ds:
+            par_date[x].add(svc)
+    # services qui roulent exactement les mêmes jours = un seul « groupe » (Ilevia : des milliers de services, quelques dizaines de groupes)
+    dates_de = defaultdict(set)
+    for x in saison:
+        for svc in par_date[x]:
+            dates_de[svc].add(x)
+    groupes, svc_types = {}, {}
+    for svc, ds in dates_de.items():
+        svc_types[svc] = groupes.setdefault(frozenset(ds), len(groupes))
+    jours_type = {x: sorted({svc_types[v] for v in par_date[x]}) for x in saison}
+    print(f"  saison jusqu'au {derniere} : {len(svc_types)} services, {len(groupes)} groupes de jours")
 
     # ---------- Arrêts : regroupement des quais par arrêt ----------
     # Avec parent_station quand le réseau le fournit, sinon par nom identique à moins de 400 m
@@ -215,13 +234,14 @@ def main():
                               int(l.get("route_type") or 3) % 100 if (l.get("route_type") or "3").isdigit() else 3,
                               l.get("route_color", ""), l.get("route_text_color", ""), l["route_id"]]
               for l in lire(z, "routes.txt")}
-    trajets = {l["trip_id"]: (l["route_id"], l.get("trip_headsign", ""), actifs[l["service_id"]])
-               for l in lire(z, "trips.txt") if actifs.get(l["service_id"])}
+    tous = {l["trip_id"]: (l["route_id"], l.get("trip_headsign", ""), l["service_id"])
+            for l in lire(z, "trips.txt") if l["service_id"] in svc_types}
+    trajets = {t: (r, h, actifs[svc]) for t, (r, h, svc) in tous.items() if actifs.get(svc)}
 
     # Ordre des arrêts de chaque trajet : terminus (pas un départ), direction par défaut et arrêt suivant
     ordre = defaultdict(list)
     for l in lire(z, "stop_times.txt"):
-        if l["trip_id"] in trajets:
+        if l["trip_id"] in tous:
             hh = (l.get("departure_time") or l.get("arrival_time") or "").split(":")
             mn = int(hh[0]) * 60 + int(hh[1]) if len(hh) >= 2 and hh[0].isdigit() else None
             ordre[l["trip_id"]].append((int(l["stop_sequence"]), l["stop_id"], mn))
@@ -231,7 +251,7 @@ def main():
         fin[t] = liste[-1][:2]
         for (s1, a, _), (s2, b, _) in zip(liste, liste[1:]):
             suivant[(t, s1)] = normaliser(stops.get(b, {}).get("stop_name", ""))
-    reseau = construire_reseau(ordre, trajets, parent_de, sur, lignes, stops, aujourd_hui)
+    reseau = construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes, stops)
     del ordre
 
     par_arret = defaultdict(list)
