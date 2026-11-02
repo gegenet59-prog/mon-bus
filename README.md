@@ -31,3 +31,11 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 `node tests/grandes_stations.js BORDEAUX NICE …` : les 30 stations les plus desservies avec le temps réel (doublons, direction = l'arrêt lui-même, flux en panne).
 
 `node tests/verifier_stations_paris.js` : vérifie les 996 stations ferrées d'Île-de-France et le badge des 2 029 lignes, sans consommer de quota PRIM.
+
+## Pannes métro / tram et alertes
+
+- Bandeau rouge à l'accueil quand une ligne de métro / tram / RER de la ville est en panne (info trafic officielle, lue par le relais : `?flux=pannes&ville=LILLE`).
+- 🔔 en haut : on coche ses lignes, le téléphone reçoit une notification en cas de panne puis quand le trafic reprend.
+  Le relais (Durable Object `Alertes`, `relais/src/alertes.js`) vérifie toutes les 5 min (Paris tous les quarts d'heure, quota PRIM).
+  Sur iPhone, il faut d'abord ajouter l'appli à l'écran d'accueil.
+- Villes : Lille, Paris, Bordeaux, Montpellier (Rennes : le STAR ne publie que les alertes des bus pour l'instant).

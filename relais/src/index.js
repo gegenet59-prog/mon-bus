@@ -5,6 +5,9 @@
 //
 // Usage : https://<relais>/?flux=nice   (seuls les flux de la liste ci-dessous sont acceptés)
 
+import { pannes, VILLES_PANNES } from "./pannes.js";
+export { Alertes } from "./alertes.js";
+
 const FLUX = {
   // GTFS-RT « trip updates » (protobuf)
   nice: "https://ara-api.enroute.mobi/rla/gtfs/trip-updates",
@@ -13,12 +16,23 @@ const FLUX = {
 
 const DUREE_CACHE = 20; // secondes
 
+const json = (d, status = 200, maxAge = 0) => new Response(JSON.stringify(d), { status,
+  headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8", ...(maxAge ? { "Cache-Control": `public, max-age=${maxAge}` } : {}) } });
+
 const ENTETES_CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 export default {
+  // Toutes les 5 minutes : recherche des nouvelles pannes et envoi des alertes (Paris : tous les quarts d'heure)
+  async scheduled(evenement, env, ctx) {
+    const paris = new Date(evenement.scheduledTime).getUTCMinutes() % 15 < 5 ? "1" : "0";
+    const stub = env.ALERTES.get(env.ALERTES.idFromName("principal"));
+    ctx.waitUntil(stub.fetch(`https://alertes/verifier?paris=${paris}`));
+  },
+
   async fetch(requete, env, ctx) {
     if (requete.method === "OPTIONS") return new Response(null, { headers: ENTETES_CORS });
     const url = new URL(requete.url);
@@ -57,6 +71,23 @@ export default {
       return new Response(JSON.stringify(resultats.flat()), {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": `public, max-age=${DUREE_CACHE}` },
       });
+    }
+    // Pannes de métro / tram / RER d'une ville : ?flux=pannes&ville=LILLE  (pannes-test : affiche l'erreur éventuelle)
+    if (nom === "pannes" || nom === "pannes-test") {
+      const ville = (url.searchParams.get("ville") || "").toUpperCase();
+      if (!VILLES_PANNES.includes(ville)) return json([], 200);
+      try { return json(await pannes(ville), 200, 60); }
+      catch (e) { return nom === "pannes-test" ? new Response(String(e.stack || e), { status: 500, headers: ENTETES_CORS }) : json([], 200); }
+    }
+    // Alertes sur le téléphone (Durable Object « Alertes ») :
+    //  ?flux=vapid -> clé publique · POST ?flux=abonner {endpoint, choix} · ?flux=alerte&endpoint=… -> message à afficher
+    //  ?flux=alerte-test&endpoint=… -> notification d'essai
+    if (["vapid", "abonner", "alerte", "alerte-test"].includes(nom)) {
+      const stub = env.ALERTES.get(env.ALERTES.idFromName("principal"));
+      const chemin = { vapid: "vapid", abonner: "abonner", alerte: "message", "alerte-test": "test" }[nom];
+      const r = await stub.fetch(`https://alertes/${chemin}?${url.searchParams}`,
+        requete.method === "POST" ? { method: "POST", body: await requete.text() } : {});
+      return new Response(r.body, { status: r.status, headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
     }
     const source = FLUX[nom];
     if (!source) return new Response("Flux inconnu", { status: 404, headers: ENTETES_CORS });

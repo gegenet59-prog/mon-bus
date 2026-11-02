@@ -1,0 +1,153 @@
+// Pannes de métro / tram / RER par ville, au même format pour toutes les villes :
+// { id, ville, mode: "METRO" | "TRAM" | "RER" | "TRAIN", lignes: ["1"], grave: true/false, titre, texte, fin }
+// grave = interruption, service réduit ou gros retards (ce qui déclenche une alerte) ; sinon simple info (travaux…)
+
+const CLE_PRIM = "4nXb9R6YGCqMyntuh0GmKY3U8xtlSk27"; // clé gratuite de Nice, déjà visible dans l'appli
+const SITE = "https://gegenet59-prog.github.io/mon-bus";
+
+// Réseaux qui publient leurs alertes au format GTFS-RT (protobuf)
+const ALERTES_GTFS = {
+  BORDEAUX: "https://bdx.mecatran.com/utw/ws/gtfsfeed/alerts/bordeaux?apiKey=opendata-bordeaux-metropole-flux-gtfs-rt",
+  MONTPELLIER: "https://gtfsproxy.e-tam.fr/COMMON/Alert.pb",
+  RENNES: "https://proxy.transport.data.gouv.fr/resource/star-rennes-integration-gtfs-rt-alerts",   // bus seulement pour l'instant
+};
+export const VILLES_PANNES = ["LILLE", "PARIS", ...Object.keys(ALERTES_GTFS)];
+
+const sansBalises = t => (t || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")
+  .replace(/&#39;|&rsquo;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+/g, " ").trim();
+
+// ---------- Lecture protobuf minimale (comme dans l'appli) ----------
+function lireProto(buf, debut = 0, fin = buf.length) {
+  const champs = [];
+  let i = debut;
+  const varint = () => { let r = 0, m = 1, o; do { o = buf[i++]; r += (o & 127) * m; m *= 128; } while (o & 128); return r; };
+  while (i < fin) {
+    const cle = varint(), num = Math.floor(cle / 8), type = cle & 7;
+    if (type === 0) champs.push([num, varint()]);
+    else if (type === 2) { const n = varint(); champs.push([num, [i, i + n]]); i += n; }
+    else if (type === 1) i += 8;
+    else if (type === 5) i += 4;
+    else break;
+  }
+  return champs;
+}
+const decodeur = new TextDecoder();
+const texte = (buf, [a, b]) => decodeur.decode(buf.subarray(a, b));
+function traduction(buf, plage) {           // TranslatedString -> texte en français de préférence
+  let t = "", fr = "";
+  for (const [n, v] of lireProto(buf, ...plage)) if (n === 1) {
+    let s = "", lang = "";
+    for (const [k, w] of lireProto(buf, ...v)) { if (k === 1) s = texte(buf, w); if (k === 2) lang = texte(buf, w); }
+    if (!t) t = s;
+    if (lang.startsWith("fr")) fr = s;
+  }
+  return fr || t;
+}
+
+// Type de chaque ligne (route_id -> [code, type GTFS]), écrit chaque nuit par scripts/build_ville.py
+async function lignesDe(ville) {
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/lignes/${ville}`);
+  const enCache = await cache.match(cle);
+  if (enCache) return enCache.json();
+  const r = await fetch(`${SITE}/horaires/${ville.toLowerCase()}/lignes.json`);
+  const d = r.ok ? await r.json() : {};
+  await cache.put(cle, new Response(JSON.stringify(d), { headers: { "Cache-Control": "public, max-age=21600" } }));
+  return d;
+}
+const MODE_GTFS = { 0: "TRAM", 1: "METRO", 2: "TRAIN", 5: "TRAM", 7: "TRAM" };
+
+async function pannesGtfs(ville) {
+  const r = await fetch(ALERTES_GTFS[ville], { headers: { "User-Agent": "MonBus-relais/1.0" } });
+  if (!r.ok) throw new Error(`${ville} ${r.status}`);
+  const buf = new Uint8Array(await r.arrayBuffer());
+  const lignes = await lignesDe(ville), maintenant = Date.now() / 1000, res = [];
+  for (const [n, ent] of lireProto(buf)) {
+    if (n !== 2) continue;
+    let id = "", alerte = null;
+    for (const [m, v] of lireProto(buf, ...ent)) { if (m === 1) id = texte(buf, v); if (m === 5) alerte = v; }
+    if (!alerte) continue;
+    const routes = new Set(), types = new Set(), periodes = [];
+    let effet = 0, titre = "", desc = "";
+    for (const [k, v] of lireProto(buf, ...alerte)) {
+      if (k === 1) { const p = { debut: 0, fin: 0 }; for (const [a, b] of lireProto(buf, ...v)) { if (a === 1) p.debut = b; if (a === 2) p.fin = b; } periodes.push(p); }
+      if (k === 5) for (const [a, b] of lireProto(buf, ...v)) { if (a === 2) routes.add(texte(buf, b)); if (a === 3) types.add(b); }
+      if (k === 7) effet = v;
+      if (k === 10) titre = traduction(buf, v);
+      if (k === 11) desc = traduction(buf, v);
+    }
+    // seulement les alertes en cours
+    if (periodes.length && !periodes.some(p => (!p.debut || p.debut <= maintenant) && (!p.fin || p.fin >= maintenant))) continue;
+    const parMode = {};
+    for (const route of routes) {
+      const [code, type] = lignes[route] || [];
+      const mode = MODE_GTFS[type];
+      if (mode) (parMode[mode] ??= new Set()).add(code);
+    }
+    for (const t of types) if (MODE_GTFS[t] && !routes.size) parMode[MODE_GTFS[t]] ??= new Set();
+    const fin = Math.max(0, ...periodes.map(p => p.fin || 0));
+    for (const [mode, codes] of Object.entries(parMode))
+      res.push({ id: `${ville}:${id}:${mode}`, ville, mode, lignes: [...codes].sort(), grave: [1, 2, 3].includes(effet),
+                 titre: sansBalises(titre), texte: sansBalises(desc || titre), fin: fin ? new Date(fin * 1000).toISOString() : null });
+  }
+  return res;
+}
+
+async function pannesLille() {
+  const p = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
+  const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
+  if (!r.ok) throw new Error(`LILLE ${r.status}`);
+  const res = [], maintenant = Date.now();
+  for (const f of (await r.json()).features || []) {
+    const x = f.properties;
+    const code = (x.cible || "").split("::")[1]?.split(":")[0] || "";
+    const mode = /^ME\d$/.test(code) ? "METRO" : /^(TRAM|TR|T|R)$/.test(code) ? "TRAM" : null;
+    if (!mode) continue;
+    if (x.heure_fin_prevue && Date.parse(x.heure_fin_prevue) < maintenant) continue;   // message périmé
+    const t = sansBalises(x.message);
+    res.push({ id: `LILLE:${x.identifiant_message || x.identifiant_perturbation}`, ville: "LILLE", mode,
+               lignes: mode === "METRO" ? [code.replace("ME", "")] : [], grave: x.type_perturbation === "Perturbation",
+               titre: t.split(/[.:]\s/)[0].slice(0, 120), texte: t, fin: x.heure_fin_prevue || null });
+  }
+  return res;
+}
+
+// Paris : rapports de ligne Navitia (métro, RER, tram), un appel par mode
+const MODES_PARIS = { METRO: "physical_mode:Metro", RER: "physical_mode:RapidTransit", TRAM: "physical_mode:Tramway" };
+async function pannesParis() {
+  const res = [];
+  for (const [mode, pm] of Object.entries(MODES_PARIS)) {
+    const r = await fetch(`https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia/physical_modes/${pm}/line_reports?count=100&disable_geojson=true`,
+                          { headers: { apikey: CLE_PRIM } });
+    if (!r.ok) throw new Error(`PARIS ${r.status}`);
+    const d = await r.json();
+    const touchees = {};   // perturbation -> codes des lignes touchées (liens de la ligne et de ses arrêts)
+    for (const lr of d.line_reports || []) {
+      const code = lr.line?.code;
+      const liens = [...(lr.line?.links || []), ...(lr.pt_objects || []).flatMap(o => o.links || o[o.embedded_type]?.links || [])];
+      for (const link of liens) if (link.type === "disruption") (touchees[link.id] ??= new Set()).add(code);
+    }
+    for (const di of d.disruptions || []) {
+      if (di.status !== "active" || !touchees[di.id]) continue;
+      const m = (di.messages || []).find(x => (x.channel?.types || []).includes("web")) || (di.messages || [])[0];
+      const titreMsg = (di.messages || []).find(x => (x.channel?.types || []).includes("title"));
+      const t = sansBalises(m?.text);
+      const effet = di.severity?.effect || "";
+      res.push({ id: `PARIS:${di.id}`, ville: "PARIS", mode, lignes: [...touchees[di.id]].sort(),
+                 grave: ["NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS"].includes(effet),
+                 titre: sansBalises(titreMsg?.text) || t.split(/[.:]\s/)[0].slice(0, 120), texte: t,
+                 fin: di.application_periods?.at(-1)?.end || null });
+    }
+  }
+  return res;
+}
+
+// Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
+export async function pannes(ville) {
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/${ville}`);
+  const enCache = await cache.match(cle);
+  if (enCache) return enCache.json();
+  const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
+              : ALERTES_GTFS[ville] ? await pannesGtfs(ville) : [];
+  await cache.put(cle, new Response(JSON.stringify(liste), { headers: { "Cache-Control": `public, max-age=${ville === "PARIS" ? 900 : 120}` } }));
+  return liste;
+}

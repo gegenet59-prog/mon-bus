@@ -81,6 +81,23 @@
   .actions { display:flex; gap:8px; margin-top:10px; border-top:1px solid #eee; padding-top:10px; }
   .actions button { flex:1; padding:10px; font-size:14px; background:#f2f2f4; color:var(--texte); }
   .trafic h2 { color:#b45309; }
+  /* Pannes métro / tram de la ville (bandeau d'accueil) et réglage des alertes */
+  .entete-droite { display:flex; align-items:center; gap:8px; }
+  #cloche { width:40px; height:40px; padding:0; border-radius:50%; background:#fff; color:var(--indigo); font-size:18px; }
+  #cloche.active { background:#fff3c4; }
+  #pannes { margin:-2px 0 12px; }
+  .panne { background:#fdecec; border:1px solid #f3b4b4; color:#7f1d1d; border-radius:14px; padding:10px 14px; margin-bottom:8px; font-size:15px; }
+  .panne summary { cursor:pointer; font-weight:600; }
+  .panne p { margin:8px 0 2px; white-space:pre-line; font-size:14px; color:#4a1515; }
+  #panneauAlertes { margin:0 0 12px; }
+  #panneauAlertes h2 { margin:0 0 6px; font-size:16px; }
+  .choixLignes { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+  .choixLignes label { display:inline-flex; align-items:center; gap:4px; padding:7px 10px; border:1px solid #ccd; border-radius:999px; font-size:14px; background:#fff; }
+  .choixLignes input { margin:0; }
+  .choixLignes label:has(input:checked) { background:#e7efff; border-color:var(--bleu); font-weight:600; }
+  .boutonsAlertes { display:flex; gap:8px; }
+  .boutonsAlertes button { flex:1; padding:11px; font-size:15px; }
+  .boutonsAlertes .secondaire { background:#f2f2f4; color:var(--texte); }
   .trafic details { border-top:1px solid #eee; padding:8px 0; font-size:14px; }
   .trafic summary { cursor:pointer; }
   .trafic p { white-space:pre-line; margin:8px 0 0; color:#333; }
@@ -90,13 +107,15 @@
 <main>
   <div class="entete">
     <div><span class="appli">Mon bus</span><span id="salut">Bonjour</span></div>
-    <div id="villes"></div>
+    <div class="entete-droite"><button id="cloche" aria-label="Alertes de panne métro et tram">🔔</button><div id="villes"></div></div>
   </div>
+  <div id="panneauAlertes" class="arret" hidden></div>
   <div id="toast"></div>
   <div class="tuiles">
     <button id="gps" class="tuile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span>Autour de moi</span></button>
     <button id="micro" class="tuile" aria-label="Parler : reste appuyé pour dire l'arrêt et la ligne"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span><span id="microTexte">Parler</span><small id="microAide">Reste appuyé</small></span></button>
   </div>
+  <div id="pannes"></div>
   <div id="proches"></div>
   <form id="formulaire">
     <input id="question" placeholder="ex : 14 C1 République Beaux-Arts" autocomplete="off">
@@ -334,6 +353,8 @@ function choisirVille(v) {
   $("resultats").innerHTML = ""; $("statut").textContent = ""; $("proches").innerHTML = "";
   DERNIERE = null;
   montrerRecents();
+  if ($("panneauAlertes")) $("panneauAlertes").hidden = true;
+  if (typeof afficherPannes === "function") afficherPannes();
 }
 
 $("gps").onclick = () => autourDeMoi();
@@ -1334,6 +1355,110 @@ if (!Reco) {
   $("micro").addEventListener("pointercancel", fin);
   $("micro").addEventListener("contextmenu", e => e.preventDefault());
 }
+
+// ===================== Pannes de métro / tram (bandeau) et alertes sur le téléphone =====================
+// Le relais Cloudflare lit l'info trafic officielle de chaque ville et garde les abonnements aux alertes.
+const RELAIS = "https://mon-bus.gegenet59.workers.dev/";
+const VILLES_ALERTES = ["LILLE", "PARIS", "BORDEAUX", "MONTPELLIER"];   // Rennes : alertes des bus seulement pour l'instant
+const NOM_MODE = { METRO: "Métro", TRAM: "Tram", RER: "RER", TRAIN: "Train" };
+const nomPanne = p => p.lignes.length ? p.lignes.map(l => `${NOM_MODE[p.mode] || p.mode} ${l.toUpperCase()}`).join(", ") : (NOM_MODE[p.mode] || p.mode);
+
+async function afficherPannes() {
+  const v = VILLE;
+  if (!VILLES_ALERTES.includes(v)) { $("pannes").innerHTML = ""; return; }
+  let liste = [];
+  try { liste = (await (await fetch(`${RELAIS}?flux=pannes&ville=${v}`)).json()).filter(p => p.grave); } catch { return; }
+  if (v !== VILLE) return;
+  $("pannes").innerHTML = liste.map(p => `<details class="panne"><summary>⚠️ ${echapper(nomPanne(p))} · `
+    + `${/interromp|coupé/i.test(p.titre + p.texte) ? "interrompu" : "perturbé"}</summary><p>${echapper(p.texte)}</p></details>`).join("");
+}
+setInterval(() => { if (document.visibilityState === "visible") afficherPannes(); }, 120000);
+
+// Lignes proposées pour les alertes de la ville
+async function lignesAlertes(v) {
+  if (v === "LILLE") return [["METRO:1", "Métro 1"], ["METRO:2", "Métro 2"], ["TRAM:*", "Tram"]];
+  if (v === "PARIS") return [..."1 2 3 3B 4 5 6 7 7B 8 9 10 11 12 13 14".split(" ").map(l => [`METRO:${l}`, `Métro ${l}`]),
+                             ..."ABCDE".split("").map(l => [`RER:${l}`, `RER ${l}`]), ["TRAM:*", "Tous les trams"]];
+  const conf = VILLES.find(x => x.id === v);
+  const d = await (await fetch(`horaires/${conf.gtfs}/lignes.json`)).json().catch(() => ({}));
+  const vus = new Map();
+  for (const [code, type] of Object.values(d)) {
+    const mode = { 0: "TRAM", 1: "METRO", 5: "TRAM", 7: "TRAM" }[type];
+    if (mode) vus.set(`${mode}:${code}`, `${NOM_MODE[mode]} ${code.toUpperCase()}`);
+  }
+  return [...vus].sort((a, b) => a[1].localeCompare(b[1], "fr", { numeric: true }));
+}
+const lireAlertes = () => { try { return JSON.parse(localStorage.getItem("alertes") || "{}"); } catch { return {}; } };
+const majCloche = () => $("cloche").classList.toggle("active", Object.values(lireAlertes()).some(l => l.length));
+
+async function ouvrirAlertes() {
+  const p = $("panneauAlertes");
+  if (!p.hidden) { p.hidden = true; return; }
+  p.hidden = false;
+  const v = VILLE, nom = villeActuelle().nom;
+  if (!VILLES_ALERTES.includes(v)) {
+    p.innerHTML = `<h2>🔔 Alertes pannes · ${nom}</h2><p class="aide">Ce réseau ne publie pas encore son info trafic en accès libre : pas d'alerte possible pour l'instant.</p>`;
+    return;
+  }
+  const choisis = lireAlertes()[v] || [];
+  const lignes = await lignesAlertes(v);
+  p.innerHTML = `<h2>🔔 Alertes pannes · ${nom}</h2>
+    <p class="aide" style="margin:0">Coche tes lignes : ton téléphone te prévient s'il y a une panne, puis quand le trafic reprend.</p>
+    <div class="choixLignes">${lignes.map(([val, txt]) => `<label><input type="checkbox" value="${val}"${choisis.includes(val) ? " checked" : ""}> ${txt}</label>`).join("")}</div>
+    ${v === "RENNES" ? `<p class="aide">⚠️ Le STAR ne publie pour l'instant que les alertes des bus : le métro arrivera quand ils l'ajouteront.</p>` : ""}
+    <div class="boutonsAlertes"><button id="alertesOk">Enregistrer</button><button id="alertesFermer" class="secondaire">Fermer</button></div>
+    <p class="aide" id="alertesStatut"></p>`;
+  $("alertesFermer").onclick = () => { p.hidden = true; };
+  $("alertesOk").onclick = () => enregistrerAlertes(v, [...p.querySelectorAll("input:checked")].map(i => i.value));
+}
+
+async function enregistrerAlertes(v, lignes) {
+  const statut = t => { if ($("alertesStatut")) $("alertesStatut").textContent = t; };
+  const choix = lireAlertes();
+  choix[v] = lignes;
+  try { localStorage.setItem("alertes", JSON.stringify(choix)); } catch {}
+  majCloche();
+  const actives = Object.values(choix).some(l => l.length);
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    statut(SUR_IPHONE ? "Sur iPhone : ajoute d'abord Mon bus à l'écran d'accueil (bouton Partager › « Sur l'écran d'accueil »), ouvre-la depuis l'icône, puis reviens ici."
+                      : "Ce navigateur ne sait pas recevoir de notifications. Essaie avec Chrome.");
+    return;
+  }
+  try {
+    statut("Un instant…");
+    const reg = await navigator.serviceWorker.register("sw.js");
+    await navigator.serviceWorker.ready;
+    let abo = await reg.pushManager.getSubscription();
+    if (!actives) {
+      if (abo) {
+        await fetch(`${RELAIS}?flux=abonner`, { method: "POST", body: JSON.stringify({ endpoint: abo.endpoint, choix: {} }) });
+        await abo.unsubscribe();
+      }
+      statut("Alertes coupées."); toast("🔕 Alertes coupées");
+      return;
+    }
+    if (Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted") {
+      statut("Les notifications sont refusées pour ce site : autorise-les dans les réglages du navigateur, puis réessaie.");
+      return;
+    }
+    const nouveau = !abo;
+    if (!abo) {
+      const { cle } = await (await fetch(`${RELAIS}?flux=vapid`)).json();
+      const brut = atob(cle.replace(/-/g, "+").replace(/_/g, "/"));
+      abo = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(brut, c => c.charCodeAt(0)) });
+    }
+    const r = await (await fetch(`${RELAIS}?flux=abonner`, { method: "POST", body: JSON.stringify({ endpoint: abo.endpoint, choix }) })).json();
+    if (!r.abonne) throw new Error(r.erreur || "refusé");
+    if (nouveau) fetch(`${RELAIS}?flux=alerte-test&endpoint=${encodeURIComponent(abo.endpoint)}`).catch(() => {});
+    statut(lignes.length ? `C'est enregistré : ${lignes.length} ligne${lignes.length > 1 ? "s" : ""} surveillée${lignes.length > 1 ? "s" : ""}.` : "Plus d'alerte pour cette ville.");
+    toast(nouveau ? "🔔 Alertes activées : une notification d'essai arrive" : "🔔 Alertes mises à jour");
+  } catch (e) { statut("Impossible d'activer les alertes pour l'instant. Réessaie dans un moment."); }
+}
+$("cloche").onclick = ouvrirAlertes;
+majCloche();
+
+// Ouverture depuis une notification : ?ville=PARIS
+try { const v = new URLSearchParams(location.search).get("ville"); if (v && VILLES.some(x => x.id === v && x.dispo)) VILLE = v; } catch {}
 
 if (!VILLES.some(v => v.id === VILLE && v.dispo)) VILLE = "LILLE";
 choisirVille(VILLE);

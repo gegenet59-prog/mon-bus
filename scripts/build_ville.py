@@ -245,6 +245,9 @@ def main():
                   f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(sortie, "arrets.json"), "w", encoding="utf-8") as f:
         json.dump(arrets, f, ensure_ascii=False, separators=(",", ":"))
+    # Type de chaque ligne (route_id -> [code, type GTFS]) : sert au relais pour trier les alertes (métro, tram…)
+    with open(os.path.join(sortie, "lignes.json"), "w", encoding="utf-8") as f:
+        json.dump({rid: [l[0], l[1]] for rid, l in lignes.items()}, f, ensure_ascii=False, separators=(",", ":"))
     print(f"{ville} : {len(par_arret)} arrêts, {total} passages")
 
 

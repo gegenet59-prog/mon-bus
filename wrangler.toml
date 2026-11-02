@@ -4,3 +4,16 @@ name = "mon-bus"
 main = "relais/src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+
+# Alertes « panne de métro / tram » : abonnés gardés dans un Durable Object (offre gratuite, stockage SQLite)
+[[durable_objects.bindings]]
+name = "ALERTES"
+class_name = "Alertes"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Alertes"]
+
+# Vérification des pannes toutes les 5 minutes
+[triggers]
+crons = ["*/5 * * * *"]
