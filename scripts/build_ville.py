@@ -75,6 +75,46 @@ def services_actifs(z, jours):
 SORTIE = ""
 
 
+def construire_reseau(ordre, trajets, parent_de, sur, lignes, stops, aujourd_hui):
+    """Plan du réseau pour les itinéraires (sans horaires précis) :
+    {"l": [[code, type, couleur, couleur texte], ...],
+     "p": [[n° ligne, direction, [arrêts dans l'ordre], [minutes entre deux arrêts], {"AAAAMMJJ": [trajets par heure x24]}], ...]}
+    Un « parcours » = une ligne + une suite d'arrêts ; les trajets identiques sont regroupés et comptés par heure de départ."""
+    jours = {(aujourd_hui + timedelta(days=d)).strftime("%Y%m%d"): d for d in (-1, 0, 1, 2)}
+    tables_l, idx_l, parcours = [], {}, {}
+    for t, liste in ordre.items():
+        route, direction, dates = trajets[t]
+        suite, temps, prec = [], [], None
+        for _, sid, mn in liste:
+            pid = parent_de.get(sid)
+            if pid is None or (suite and suite[-1] == sur[pid]):
+                continue
+            if suite:
+                temps.append(max(0.5, (mn - prec) if (mn is not None and prec is not None) else 2))
+            suite.append(sur[pid])
+            prec = mn
+        if len(suite) < 2:
+            continue
+        if route not in idx_l:
+            l = lignes.get(route, [route, 3, "", "", route])
+            idx_l[route] = len(tables_l)
+            tables_l.append(l[:4])
+        direction = normaliser(direction or stops.get(liste[-1][1], {}).get("stop_name", ""))
+        cle = (route, tuple(suite))
+        p = parcours.get(cle)
+        if p is None:
+            p = parcours[cle] = [idx_l[route], direction, suite, [round(x, 1) for x in temps], {}]
+        depart = liste[0][2] or 0
+        for d in dates:
+            # trajet après minuit (25h…) : compté le lendemain
+            jd = datetime.strptime(d, "%Y%m%d") + timedelta(days=depart // 1440)
+            cled = jd.strftime("%Y%m%d")
+            if cled not in jours:
+                continue
+            p[4].setdefault(cled, [0] * 24)[(depart % 1440) // 60] += 1
+    return {"l": tables_l, "p": list(parcours.values())}
+
+
 def completer_communes(arrets):
     """Arrêts du même nom à plus d'1 km l'un de l'autre (Wagner à Lille ET à Wattrelos) sans commune dans les données :
     on demande la commune à l'API officielle geo.api.gouv.fr (par position). En cas d'échec, l'appli dit « près de … »."""
@@ -182,13 +222,16 @@ def main():
     ordre = defaultdict(list)
     for l in lire(z, "stop_times.txt"):
         if l["trip_id"] in trajets:
-            ordre[l["trip_id"]].append((int(l["stop_sequence"]), l["stop_id"]))
+            hh = (l.get("departure_time") or l.get("arrival_time") or "").split(":")
+            mn = int(hh[0]) * 60 + int(hh[1]) if len(hh) >= 2 and hh[0].isdigit() else None
+            ordre[l["trip_id"]].append((int(l["stop_sequence"]), l["stop_id"], mn))
     fin, suivant = {}, {}
     for t, liste in ordre.items():
         liste.sort()
-        fin[t] = liste[-1]
-        for (s1, a), (s2, b) in zip(liste, liste[1:]):
+        fin[t] = liste[-1][:2]
+        for (s1, a, _), (s2, b, _) in zip(liste, liste[1:]):
             suivant[(t, s1)] = normaliser(stops.get(b, {}).get("stop_name", ""))
+    reseau = construire_reseau(ordre, trajets, parent_de, sur, lignes, stops, aujourd_hui)
     del ordre
 
     par_arret = defaultdict(list)
@@ -245,6 +288,9 @@ def main():
                   f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(sortie, "arrets.json"), "w", encoding="utf-8") as f:
         json.dump(arrets, f, ensure_ascii=False, separators=(",", ":"))
+    # Plan du réseau pour les itinéraires : suite des arrêts de chaque ligne, temps entre arrêts, trajets par heure
+    with open(os.path.join(sortie, "reseau.json"), "w", encoding="utf-8") as f:
+        json.dump(reseau, f, ensure_ascii=False, separators=(",", ":"))
     # Type de chaque ligne (route_id -> [code, type GTFS]) : sert au relais pour trier les alertes (métro, tram…)
     with open(os.path.join(sortie, "lignes.json"), "w", encoding="utf-8") as f:
         json.dump({rid: [l[0], l[1]] for rid, l in lignes.items()}, f, ensure_ascii=False, separators=(",", ":"))

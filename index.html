@@ -81,6 +81,32 @@
   .actions { display:flex; gap:8px; margin-top:10px; border-top:1px solid #eee; padding-top:10px; }
   .actions button { flex:1; padding:10px; font-size:14px; background:#f2f2f4; color:var(--texte); }
   .trafic h2 { color:#b45309; }
+  /* Itinéraire : bandeau d'accueil + écran séparé */
+  .bandeauIti { width:100%; display:flex; justify-content:space-between; align-items:center; background:var(--indigo); color:#fff;
+                border-radius:16px; padding:13px 16px; margin:-2px 0 12px; font-size:17px; font-weight:700; }
+  .bandeauIti small { font-size:13px; font-weight:500; opacity:.85; }
+  #ecranIti { display:none; }
+  body.iti main > *:not(#ecranIti) { display:none !important; }
+  body.iti #ecranIti { display:block; }
+  .barreIti { display:flex; align-items:center; gap:10px; margin:4px 0 14px; }
+  .barreIti h1 { margin:0; font-size:24px; color:var(--indigo); }
+  #itiRetour { background:#fff; color:var(--indigo); width:40px; height:40px; padding:0; border-radius:50%; font-size:20px; }
+  .champsIti { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; }
+  .champsIti input { width:100%; box-sizing:border-box; }
+  #itiInverser { grid-row:1 / span 2; grid-column:2; background:#fff; color:var(--indigo); width:44px; height:44px; padding:0; border-radius:50%; font-size:20px; }
+  #itiOk { width:100%; margin-top:10px; padding:13px; }
+  #itiSuggestions { display:flex; flex-direction:column; gap:4px; margin-top:8px; }
+  #itiSuggestions button { background:#fff; color:var(--texte); text-align:left; padding:11px 12px; font-size:15px; border:1px solid #e3e6ef; }
+  .carteIti { background:#fff; border-radius:14px; padding:12px 14px; margin-top:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer; }
+  .enteteIti { display:flex; justify-content:space-between; gap:8px; font-size:13px; color:var(--gris); }
+  .dureeIti { font-weight:700; font-size:17px; color:var(--texte); white-space:nowrap; }
+  .lignesIti { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; }
+  .lignesIti .fleche { color:var(--gris); font-size:18px; }
+  .etapesIti { display:none; margin:10px 0 2px; padding-left:20px; font-size:14px; line-height:1.5; }
+  .carteIti.ouverte .etapesIti { display:block; }
+  .etapesIti li { margin-bottom:10px; }
+  .etapesIti .num { display:inline-block; min-width:40px; font-size:14px; vertical-align:middle; }
+  .arretIti { background:none; color:var(--bleu); padding:0; font-size:14px; font-weight:600; text-decoration:underline; }
   /* Pannes métro / tram de la ville (bandeau d'accueil) et réglage des alertes */
   .entete-droite { display:flex; align-items:center; gap:8px; }
   #cloche { width:40px; height:40px; padding:0; border-radius:50%; background:#fff; color:var(--indigo); font-size:18px; }
@@ -115,6 +141,7 @@
     <button id="gps" class="tuile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span>Autour de moi</span></button>
     <button id="micro" class="tuile" aria-label="Parler : reste appuyé pour dire l'arrêt et la ligne"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span><span id="microTexte">Parler</span><small id="microAide">Reste appuyé</small></span></button>
   </div>
+  <button id="itiBtn" class="bandeauIti"><span>🧭 Itinéraire</span><small>Aller de A à B ›</small></button>
   <div id="pannes"></div>
   <div id="proches"></div>
   <form id="formulaire">
@@ -126,6 +153,17 @@
   <div id="recents"></div>
   <div id="statut"></div>
   <div id="resultats"></div>
+  <section id="ecranIti">
+    <div class="barreIti"><button id="itiRetour" aria-label="Retour">←</button><h1>Itinéraire</h1></div>
+    <div class="champsIti">
+      <input id="itiDepart" placeholder="Départ : arrêt ou adresse" autocomplete="off">
+      <button id="itiInverser" aria-label="Inverser départ et arrivée">⇅</button>
+      <input id="itiArrivee" placeholder="Arrivée : arrêt ou adresse" autocomplete="off">
+    </div>
+    <div id="itiSuggestions"></div>
+    <button id="itiOk">Chercher l'itinéraire</button>
+    <div id="itiResultats"></div>
+  </section>
   <p class="aide sources">Données : <a href="https://data.lillemetropole.fr">Ilevia / Métropole Européenne de Lille</a> ·
     <a href="https://transport.data.gouv.fr/datasets/horaires-sncf">SNCF Voyageurs</a> (ODbL) ·
     <a href="https://prim.iledefrance-mobilites.fr">Île-de-France Mobilités – PRIM</a> ·
@@ -354,6 +392,7 @@ function choisirVille(v) {
   DERNIERE = null;
   montrerRecents();
   if ($("panneauAlertes")) $("panneauAlertes").hidden = true;
+  try { ITI.depart = ITI.arrivee = null; } catch {}
   if (typeof afficherPannes === "function") afficherPannes();
 }
 
@@ -1482,6 +1521,304 @@ majCloche();
 
 // Ouverture depuis une notification : ?ville=PARIS
 try { const v = new URLSearchParams(location.search).get("ville"); if (v && VILLES.some(x => x.id === v && x.dispo)) VILLE = v; } catch {}
+
+// ===================== Itinéraire (de A à B) =====================
+// Le plan du réseau (horaires/<ville>/reseau.json, refait chaque nuit) donne la suite des arrêts de chaque ligne et les temps
+// entre arrêts. Les horaires prévus servent seulement à écarter les lignes qui ne roulent pas et à estimer l'attente.
+// Calcul sur le téléphone : plus court chemin (Dijkstra), relancé avec plusieurs critères pour proposer 2 à 4 options.
+const ITI = { ville: null, reseau: null, arrets: null, parArret: null, voisins: null, depart: null, arrivee: null };
+const VITESSE_MARCHE = 75;   // mètres par minute (4,5 km/h), détours compris via le facteur 1,25
+const minutesMarche = m => Math.max(1, Math.round(m * 1.25 / VITESSE_MARCHE));
+const dossierVille = v => v === "LILLE" ? "lille" : VILLES.find(x => x.id === v)?.gtfs;
+
+async function chargerReseau() {
+  if (ITI.ville === VILLE && ITI.reseau) return true;
+  const d = dossierVille(VILLE);
+  if (!d) return false;
+  const [reseau, arrets] = await Promise.all([fetch(`horaires/${d}/reseau.json`).then(r => r.ok ? r.json() : null).catch(() => null),
+                                             fetch(`horaires/${d}/arrets.json`).then(r => r.json()).catch(() => [])]);
+  if (!reseau) return false;
+  const pos = {};
+  for (const [id, nom, commune, la, lo] of arrets) pos[id] = { id, nom, commune, la, lo };
+  const parArret = {};
+  reseau.p.forEach((p, i) => p[2].forEach((id, k) => (parArret[id] ??= []).push([i, k])));
+  // voisins à pied (correspondance à moins de 350 m), avec une grille pour aller vite
+  const grille = {}, cle = (la, lo) => `${Math.floor(la / 0.004)}:${Math.floor(lo / 0.006)}`;
+  for (const a of Object.values(pos)) (grille[cle(a.la, a.lo)] ??= []).push(a);
+  const voisins = {};
+  for (const a of Object.values(pos)) {
+    const gi = Math.floor(a.la / 0.004), gj = Math.floor(a.lo / 0.006), l = [];
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++)
+      for (const b of grille[`${gi + di}:${gj + dj}`] || []) {
+        if (b.id === a.id) continue;
+        const m = distance(a.la, a.lo, b.la, b.lo);
+        if (m < 350) l.push([b.id, m]);
+      }
+    voisins[a.id] = l;
+  }
+  Object.assign(ITI, { ville: VILLE, reseau, arrets: pos, parArret, voisins, grille, cleGrille: cle });
+  return true;
+}
+
+// Arrêts à moins de `rayon` mètres d'un point
+function arretsAutour(la, lo, rayon) {
+  const res = [];
+  for (const a of Object.values(ITI.arrets)) { const m = distance(la, lo, a.la, a.lo); if (m < rayon) res.push([a.id, m]); }
+  return res.sort((x, y) => x[1] - y[1]);
+}
+
+// Trajets par heure d'un parcours, maintenant (et l'heure suivante) -> attente moyenne en minutes, ou null s'il ne roule pas
+function attenteParcours(p) {
+  const n = new Date(), cle = d => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  const h = n.getHours(), suiv = new Date(n.getTime() + 3600000);
+  const ici = (p[4][cle(n)] || [])[h] || 0, apres = (p[4][cle(suiv)] || [])[suiv.getHours()] || 0;
+  const nb = n.getMinutes() < 30 ? ici + apres / 2 : ici / 2 + apres;   // départs dans l'heure qui vient (environ)
+  if (nb < 0.5) return null;
+  return Math.min(30, 30 / nb);   // la moitié de l'intervalle entre deux passages
+}
+
+// Plus court chemin. sources / cibles : { idArret: minutes à pied }. Profil : pénalités de changement et de marche.
+function calculerIti(sources, cibles, profil) {
+  const R = ITI.reseau, attentes = R.p.map(attenteParcours);
+  const lab = {};          // id -> meilleure étiquette { cout, duree, montees, prec, etape, apresMarche }
+  const file = [];         // file de priorité simple (tableau trié par insertion binaire)
+  const pousser = e => { let a = 0, b = file.length; while (a < b) { const m = (a + b) >> 1; if (file[m].cout < e.cout) a = m + 1; else b = m; } file.splice(a, 0, e); };
+  const mettre = (id, e) => { const k = id + (e.apresMarche ? "|m" : ""); if (lab[k] && lab[k].cout <= e.cout) return; lab[k] = e; pousser({ ...e, id, k }); };
+  for (const [id, m] of Object.entries(sources)) mettre(id, { cout: m * profil.marche, duree: m, montees: 0, prec: null, etape: m ? { type: "marche", min: m, a: id } : null, apresMarche: true });
+  const vus = new Set();
+  let meilleur = null;
+  while (file.length) {
+    const e = file.shift();
+    if (vus.has(e.k) || e.cout > (lab[e.k]?.cout ?? Infinity)) continue;
+    vus.add(e.k);
+    if (meilleur && e.cout >= meilleur.cout) break;
+    if (e.id in cibles) {
+      const m = cibles[e.id], fin = { cout: e.cout + m * profil.marche, duree: e.duree + m, prec: e, etape: m ? { type: "marche", min: m, de: e.id, fin: true } : null };
+      if (!meilleur || fin.cout < meilleur.cout) meilleur = fin;
+    }
+    // à pied vers un arrêt voisin (pas deux marches de suite)
+    if (!e.apresMarche) for (const [v, m] of ITI.voisins[e.id] || []) {
+      const t = minutesMarche(m);
+      mettre(v, { cout: e.cout + t * profil.marche + 1, duree: e.duree + t, montees: e.montees, prec: e, etape: { type: "marche", min: t, de: e.id, a: v }, apresMarche: true });
+    }
+    // monter dans une ligne qui passe ici
+    for (const [pi, k] of ITI.parArret[e.id] || []) {
+      const p = R.p[pi], att = attentes[pi];
+      if (att === null || k === p[2].length - 1) continue;
+      if (e.etape?.type === "ligne" && R.p[e.etape.p][0] === p[0]) continue;   // pas remonter dans la même ligne
+      let cout = e.cout + att * profil.attente + (e.montees ? profil.changement : 0), duree = e.duree + att;
+      for (let j = k + 1; j < p[2].length; j++) {
+        cout += p[3][j - 1]; duree += p[3][j - 1];
+        mettre(p[2][j], { cout, duree, montees: e.montees + 1, prec: e, apresMarche: false,
+                          etape: { type: "ligne", p: pi, de: e.id, a: p[2][j], arrets: j - k, min: Math.round(duree - e.duree - att), attente: att } });
+      }
+    }
+  }
+  if (!meilleur) return null;
+  const etapes = [];
+  for (let x = meilleur; x; x = x.prec) if (x.etape) etapes.unshift(x.etape);
+  return { duree: Math.round(meilleur.duree), etapes,
+           changements: Math.max(0, etapes.filter(s => s.type === "ligne").length - 1),
+           marche: etapes.filter(s => s.type === "marche").reduce((t, s) => t + s.min, 0) };
+}
+
+const PROFILS = [
+  { nom: "Conseillé", icone: "⭐", changement: 5, marche: 1.5, attente: 1 },
+  { nom: "Le plus rapide", icone: "⚡", changement: 1, marche: 1, attente: 1 },
+  { nom: "Moins de changements", icone: "🔁", changement: 25, marche: 1.5, attente: 1 },
+  { nom: "Moins de marche", icone: "🚶", changement: 5, marche: 4, attente: 1 },
+];
+
+// Lieu choisi -> minutes à pied vers les arrêts proches
+function accesLieu(lieu) {
+  const res = {};
+  if (lieu.ids?.length) {
+    for (const id of lieu.ids) if (ITI.arrets[id]) { res[id] = 0; for (const [v, m] of ITI.voisins[id] || []) res[v] ??= minutesMarche(m); }
+    return res;
+  }
+  let autour = arretsAutour(lieu.la, lieu.lo, 700);
+  if (autour.length < 3) autour = arretsAutour(lieu.la, lieu.lo, 1500).slice(0, 8);
+  for (const [id, m] of autour.slice(0, 25)) res[id] = minutesMarche(m);
+  return res;
+}
+
+// ---------- Écran ----------
+const pastilleLigne = l => {
+  const [code, type, couleur, texte] = l;
+  const mode = { 0: "Tram", 1: "Métro", 2: "Train", 4: "Bateau", 5: "Tram", 6: "Téléph.", 7: "Funic." }[type] || "Bus";
+  const affiche = type === 1 ? String(code).replace(/^M(?=\d)/, "") : String(code).toUpperCase().replace(/^0+(?=\d)/, "");
+  return `<span class="num" style="background:#${couleur || "1e2761"};color:#${texte || "FFFFFF"}"><small>${mode}</small>${echapper(affiche)}</span>`;
+};
+const nomArret = id => titre(ITI.arrets[id]?.nom || "?");
+
+function ouvrirItineraire() {
+  document.body.classList.add("iti");
+  window.scrollTo(0, 0);
+  if (!ITI.depart) ITI.depart = { nom: "📍 Ma position", position: true };
+  $("itiDepart").value = ITI.depart.nom; $("itiArrivee").value = ITI.arrivee?.nom || "";
+  $("itiResultats").innerHTML = "";
+  if (VILLE === "PARIS") {
+    $("itiResultats").innerHTML = `<p class="aide">Pour Paris, l'itinéraire passe par Google Maps (le plan complet de l'Île-de-France est trop gros pour le téléphone).</p>`;
+  }
+  history.pushState({ iti: true }, "");
+}
+function fermerItineraire() { document.body.classList.remove("iti"); $("itiSuggestions").innerHTML = ""; }
+window.addEventListener("popstate", () => { if (document.body.classList.contains("iti")) fermerItineraire(); });
+
+let MINUTERIE_ADRESSE = null;
+async function suggerer(champ) {
+  const q = $(champ === "depart" ? "itiDepart" : "itiArrivee").value.trim();
+  const boite = $("itiSuggestions");
+  boite.dataset.champ = champ;
+  const choix = [];
+  if (champ === "depart") choix.push({ nom: "📍 Ma position", position: true });
+  if (q.length < 2) {
+    for (const f of lireListe("favoris")) { const n = nomFavori(f); choix.push({ nom: "⭐ " + n, recherche: f.f ? null : n, force: f.f || null }); }
+  } else if (await chargerReseau()) {
+    const mots = analyser(q).arret, vus = new Set();
+    const noms = [...new Set(Object.values(ITI.arrets).map(a => a.nom))];
+    const notes = noms.map(n => { const nw = motsUtiles(n); const ok = mots.filter(m => nw.some(w => proche(w, m) || w.startsWith(m))).length; return [n, ok, nw.length]; })
+      .filter(x => x[1] === mots.length && x[1] > 0).sort((a, b) => a[2] - b[2]).slice(0, 6);
+    for (const [n] of notes) {
+      if (vus.has(n)) continue; vus.add(n);
+      choix.push({ nom: titre(n), ids: Object.values(ITI.arrets).filter(a => a.nom === n).map(a => a.id) });
+    }
+  }
+  afficherSuggestions(choix);
+  // adresses (service officiel de l'État), après une petite pause de frappe
+  clearTimeout(MINUTERIE_ADRESSE);
+  if (q.length >= 4 && /\d|rue|avenue|bd|boulevard|place|chemin|allée|route|impasse|quai/i.test(q)) MINUTERIE_ADRESSE = setTimeout(async () => {
+    const [la, lo] = POSITION || villeActuelle().centre || [];
+    const params = `q=${encodeURIComponent(q)}&limit=4${la ? `&lat=${la}&lon=${lo}` : ""}`;
+    let feats = [];
+    try { feats = (await (await fetch(`https://data.geopf.fr/geocodage/search?${params}`)).json()).features || []; }
+    catch { try { feats = (await (await fetch(`https://api-adresse.data.gouv.fr/search/?${params}`)).json()).features || []; } catch {} }
+    if ($(champ === "depart" ? "itiDepart" : "itiArrivee").value.trim() !== q) return;
+    afficherSuggestions([...choix, ...feats.map(f => ({ nom: "🏠 " + f.properties.label, la: f.geometry.coordinates[1], lo: f.geometry.coordinates[0] }))]);
+  }, 350);
+}
+function afficherSuggestions(choix) {
+  const boite = $("itiSuggestions"), champ = boite.dataset.champ;
+  boite.innerHTML = "";
+  for (const c of choix.slice(0, 10)) {
+    const b = document.createElement("button");
+    b.textContent = c.nom;
+    b.onclick = () => {
+      ITI[champ === "depart" ? "depart" : "arrivee"] = c;
+      $(champ === "depart" ? "itiDepart" : "itiArrivee").value = c.nom;
+      boite.innerHTML = "";
+      if (ITI.depart && ITI.arrivee) lancerItineraire();
+    };
+    boite.appendChild(b);
+  }
+}
+
+// Lieu choisi -> position / arrêts (une recherche de favori ancien style passe par le nom)
+async function preparerLieu(l) {
+  if (l.position) {
+    if (!POSITION) POSITION = await new Promise((ok, ko) => navigator.geolocation.getCurrentPosition(p => ok([p.coords.latitude, p.coords.longitude]), ko, { timeout: 10000, maximumAge: 60000 }));
+    return { la: POSITION[0], lo: POSITION[1] };
+  }
+  if (l.force?.ids || l.force?.id) return { ids: l.force.ids || [l.force.id] };
+  if (l.ids) return { ids: l.ids };
+  if (l.la) return { la: l.la, lo: l.lo };
+  // texte tapé sans choisir : le nom d'arrêt le plus proche
+  const n = meilleurNom([...new Set(Object.values(ITI.arrets).map(a => a.nom))], analyser(l.recherche || l.nom).arret);
+  return n ? { ids: Object.values(ITI.arrets).filter(a => a.nom === n).map(a => a.id) } : null;
+}
+
+async function lancerItineraire() {
+  const zone = $("itiResultats");
+  $("itiSuggestions").innerHTML = "";
+  if (!ITI.arrivee && $("itiArrivee").value.trim()) ITI.arrivee = { nom: $("itiArrivee").value.trim(), recherche: $("itiArrivee").value.trim() };
+  if (!ITI.depart && $("itiDepart").value.trim()) ITI.depart = { nom: $("itiDepart").value.trim(), recherche: $("itiDepart").value.trim() };
+  if (!ITI.depart || !ITI.arrivee) { zone.innerHTML = `<p class="aide">Choisis le départ et l'arrivée.</p>`; return; }
+  if (VILLE === "PARIS" || !(await chargerReseau())) { zone.innerHTML = lienGoogle(); return; }
+  zone.innerHTML = `<p class="aide">Je cherche…</p>`;
+  let a, b;
+  try { [a, b] = await Promise.all([preparerLieu(ITI.depart), preparerLieu(ITI.arrivee)]); }
+  catch { zone.innerHTML = `<p class="aide">Je n'arrive pas à trouver ta position. Autorise la localisation ou choisis un arrêt de départ.</p>`; return; }
+  if (!a || !b) { zone.innerHTML = `<p class="aide">Je ne trouve pas ${!a ? "le départ" : "l'arrivée"}. Choisis-le dans la liste.</p>`; return; }
+  const sources = accesLieu(a), cibles = accesLieu(b);
+  if (!Object.keys(sources).length || !Object.keys(cibles).length) { zone.innerHTML = `<p class="aide">Aucun arrêt près ${!Object.keys(sources).length ? "du départ" : "de l'arrivée"}.</p>` + lienGoogle(); return; }
+  // à pied directement, si c'est tout près
+  const pa = a.la ? [a.la, a.lo] : [ITI.arrets[a.ids[0]].la, ITI.arrets[a.ids[0]].lo];
+  const pb = b.la ? [b.la, b.lo] : [ITI.arrets[b.ids[0]].la, ITI.arrets[b.ids[0]].lo];
+  const aPied = minutesMarche(distance(...pa, ...pb));
+  const options = [], vus = new Set();
+  for (const pr of PROFILS) {
+    const r = calculerIti(sources, cibles, pr);
+    if (!r) continue;
+    const sig = r.etapes.filter(s => s.type === "ligne").map(s => `${ITI.reseau.p[s.p][0]}@${s.de}>${s.a}`).join(",");
+    if (vus.has(sig)) { options.find(o => o.sig === sig).noms.push(pr.icone + " " + pr.nom); continue; }
+    vus.add(sig);
+    options.push({ ...r, sig, noms: [pr.icone + " " + pr.nom] });
+  }
+  if (!options.length) { zone.innerHTML = `<p class="aide">Pas d'itinéraire en transports en commun pour l'instant (lignes qui ne roulent pas à cette heure ?).</p>` + lienGoogle(); return; }
+  zone.innerHTML = (aPied <= 20 ? `<p class="aide">🚶 À pied : environ ${aPied} min.</p>` : "")
+    + options.map((o, i) => carteIti(o, i)).join("") + lienGoogle(pa, pb);
+  zone.querySelectorAll(".carteIti").forEach(c => c.onclick = e => { if (!e.target.closest(".arretIti")) c.classList.toggle("ouverte"); });
+  zone.querySelectorAll(".arretIti").forEach(btn => btn.onclick = () => {
+    const id = btn.dataset.id, nom = ITI.arrets[id].nom;
+    fermerItineraire(); history.back();
+    $("question").value = titre(nom);
+    chercher(titre(nom), { force: { nom, ids: [id], id, commune: "" } });
+  });
+  options.forEach((o, i) => prochainDepart(o, i));
+}
+
+function carteIti(o, i) {
+  const R = ITI.reseau, lignes = o.etapes.filter(s => s.type === "ligne");
+  const etapes = o.etapes.map(s => {
+    const bouton = id => `<button class="arretIti" data-id="${id}">${echapper(nomArret(id))}</button>`;
+    if (s.type === "marche") return `<li>🚶 ${s.min} min à pied${s.a && !s.fin ? ` jusqu'à ${bouton(s.a)}` : s.fin ? " jusqu'à l'arrivée" : ""}</li>`;
+    const p = R.p[s.p];
+    return `<li>${pastilleLigne(R.l[p[0]])} direction <b>${echapper(titre(p[1]))}</b><br>Monte à ${bouton(s.de)}, descends à ${bouton(s.a)}
+            <small>(${s.arrets} arrêt${s.arrets > 1 ? "s" : ""}, ${s.min} min)</small></li>`;
+  }).join("");
+  const noms = o.noms.length >= 3 ? ["⭐ Le meilleur trajet"] : o.noms;   // tous les critères donnent le même : inutile de les lister
+  return `<div class="carteIti${i === 0 ? " ouverte" : ""}"><div class="enteteIti"><span class="nomsIti">${noms.join(" · ")}</span>
+    <span class="dureeIti">≈ ${o.duree} min</span></div>
+    <div class="lignesIti">${lignes.map(s => pastilleLigne(R.l[R.p[s.p][0]])).join(`<span class="fleche">›</span>`)}</div>
+    <div class="aide" style="margin:6px 0 0">${o.changements ? `${o.changements} changement${o.changements > 1 ? "s" : ""}` : "Direct"}${o.marche ? ` · ${o.marche} min à pied` : ""}
+      <span id="depIti${i}"></span></div>
+    <ol class="etapesIti">${etapes}</ol></div>`;
+}
+
+// Prochain départ prévu de la première ligne, lu dans le fichier d'horaires de l'arrêt
+async function prochainDepart(o, i) {
+  const s = o.etapes.find(x => x.type === "ligne");
+  if (!s) return;
+  const p = ITI.reseau.p[s.p], code = ITI.reseau.l[p[0]][0];
+  const f = await chargerCompact(dossierVille(VILLE), s.de);
+  if (!f) return;
+  const maintenant = new Date(), dans = [];
+  for (const [d, liste] of Object.entries(f.j)) {
+    const minuit = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+    for (const [min, li, si] of liste) {
+      if (f.l[li][0] !== code || normaliser(f.s[si]) !== p[1]) continue;
+      const h = new Date(minuit.getTime() + min * 60000);
+      if (h >= maintenant) dans.push(h);
+    }
+  }
+  dans.sort((x, y) => x - y);
+  if (dans.length && $(`depIti${i}`)) $(`depIti${i}`).textContent = ` · prochain départ ${hhmm(dans[0])} (dans ${Math.max(0, Math.round((dans[0] - maintenant) / 60000))} min, prévu)`;
+}
+
+function lienGoogle(pa, pb) {
+  const dest = pb ? `${pb[0]},${pb[1]}` : encodeURIComponent((ITI.arrivee?.nom || "").replace(/^[^\p{L}\d]+/u, "") + " " + (villeActuelle().nom || ""));
+  const orig = pa ? `&origin=${pa[0]},${pa[1]}` : "";
+  return `<p class="aide"><a href="https://www.google.com/maps/dir/?api=1${orig}&destination=${dest}&travelmode=transit" target="_blank" rel="noopener">Voir aussi dans Google Maps ›</a></p>`;
+}
+
+$("itiBtn").onclick = ouvrirItineraire;
+$("itiRetour").onclick = () => history.back();
+$("itiDepart").oninput = () => { ITI.depart = null; suggerer("depart"); };
+$("itiArrivee").oninput = () => { ITI.arrivee = null; suggerer("arrivee"); };
+$("itiDepart").onfocus = () => suggerer("depart");
+$("itiArrivee").onfocus = () => suggerer("arrivee");
+$("itiInverser").onclick = () => { [ITI.depart, ITI.arrivee] = [ITI.arrivee, ITI.depart]; $("itiDepart").value = ITI.depart?.nom || ""; $("itiArrivee").value = ITI.arrivee?.nom || ""; if (ITI.depart && ITI.arrivee) lancerItineraire(); };
+$("itiOk").onclick = lancerItineraire;
 
 if (!VILLES.some(v => v.id === VILLE && v.dispo)) VILLE = "LILLE";
 choisirVille(VILLE);

@@ -39,3 +39,10 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
   Le relais (Durable Object `Alertes`, `relais/src/alertes.js`) vérifie toutes les 5 min (Paris tous les quarts d'heure, quota PRIM).
   Sur iPhone, il faut d'abord ajouter l'appli à l'écran d'accueil.
 - Villes : Lille, Paris, Bordeaux, Montpellier (Rennes : le STAR ne publie que les alertes des bus pour l'instant).
+
+## Itinéraire
+
+Bandeau « 🧭 Itinéraire » à l'accueil → écran séparé (départ, arrivée : arrêt, favori, adresse ou ma position).
+`build_ville.py` écrit chaque nuit `reseau.json` (suite des arrêts de chaque ligne, temps entre arrêts, nombre de trajets par heure).
+Le téléphone calcule le chemin (Dijkstra) avec 4 critères (conseillé, plus rapide, moins de changements, moins de marche) ;
+les lignes qui ne roulent pas à l'heure demandée sont écartées. Paris : lien Google Maps.
