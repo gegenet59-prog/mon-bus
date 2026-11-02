@@ -13,8 +13,9 @@ const ALERTES_GTFS = {
 };
 export const VILLES_PANNES = ["LILLE", "PARIS", ...Object.keys(ALERTES_GTFS)];
 
-const sansBalises = t => (t || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")
-  .replace(/&#39;|&rsquo;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+/g, " ").trim();
+const sansBalises = t => (t || "").replace(/<br\s*\/?>|<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&rsquo;/g, "’").replace(/&quot;/g, '"').replace(/&amp;/g, "&")
+  .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 
 // ---------- Lecture protobuf minimale (comme dans l'appli) ----------
 function lireProto(buf, debut = 0, fin = buf.length) {
@@ -134,9 +135,14 @@ async function pannesParis() {
       const effet = di.severity?.effect || "";
       // Une panne de ligne touche la ligne (ou un tronçon) ; un ascenseur ou un escalier en panne n'est qu'une info de station
       const surLaLigne = (di.impacted_objects || []).some(o => ["line", "line_section"].includes(o.pt_object?.embedded_type) || o.impacted_section);
-      const equipement = /ascenseur|escalier|escalator|trottoir roulant|guichet|distributeur/i.test(`${titreMsg?.text || ""} ${m?.text || ""}`);
+      const tout = `${titreMsg?.text || ""} ${m?.text || ""}`;
+      // ascenseur, escalier… en panne : info de station, pas une panne de ligne (et il y en a des centaines) -> ignorées
+      if (/ascenseur|escalier|escalator|trottoir roulant|guichet|distributeur/i.test(tout)) continue;
+      // travaux, horaires modifiés, offre allégée : prévus à l'avance, ce n'est pas une panne
+      const prevu = /travaux|modification des horaires|horaires modifi|all[eè]gement|offre (de transport )?(est )?r[ée]duite|bus de (nuit|remplacement)/i.test(tout)
+                    || /travaux/i.test(di.cause || "");
       res.push({ id: `PARIS:${di.id}`, ville: "PARIS", mode, lignes: [...touchees[di.id]].sort(),
-                 grave: surLaLigne && !equipement && ["NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS"].includes(effet),
+                 grave: surLaLigne && !prevu && ["NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS"].includes(effet),
                  titre: sansBalises(titreMsg?.text) || t.split(/[.:]\s/)[0].slice(0, 120), texte: t,
                  fin: (di.application_periods?.at(-1)?.end || "").replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)$/, "$1-$2-$3T$4:$5:$6") || null });
     }
@@ -146,7 +152,7 @@ async function pannesParis() {
 
 // Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
 export async function pannes(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v2/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v3/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
