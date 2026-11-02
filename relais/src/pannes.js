@@ -114,6 +114,24 @@ export function perimeIlevia(x, maintenant = heureParis()) {
   return maintenant > modif + 3 * 3600000;
 }
 
+async function tramsEnTempsReel() {
+  const p = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: "dsp_ilevia:prochains_passages",
+                                  outputFormat: "application/json", CQL_FILTER: "code_ligne='TRAM'" });
+  const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
+  return r.ok ? ((await r.json()).features || []).map(f => f.properties) : [];
+}
+const sansAccents = t => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+export function tramRepart(x, trams) {
+  const modif = Date.parse(x.date_modification || "");
+  // passages mis à jour au moins 10 min après le message (le flux d'Ilevia est à l'heure de Paris, comme les messages)
+  const frais = trams.filter(t => Date.parse(t.date_modification || "") > modif + 10 * 60000);
+  if (!frais.length) return false;
+  const m = sansBalises(x.message).match(/entre (?:les stations |la station |l'arr[êe]t )?(.+?) et (?:la station |l'arr[êe]t )?(.+?)(?= jusqu| à partir|[.,;(]|$)/i);
+  if (!m) return true;
+  const voulues = [m[1], m[2]].map(sansAccents);
+  return voulues.every(v => frais.some(t => { const n = sansAccents(t.nom_station); return n.includes(v) || v.includes(n); }));
+}
+
 async function pannesLille() {
   const p = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
   const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
@@ -127,11 +145,18 @@ async function pannesLille() {
     if (x.type_perturbation !== "Perturbation" || !plusRecents[cle] || (x.date_modification || "") > (plusRecents[cle].date_modification || ""))
       plusRecents[x.type_perturbation === "Perturbation" ? cle : x.identifiant_message] = x;
   }
+  let trams = null;   // passages du tram en temps réel (lus seulement s'il y a une panne de tram)
   for (const x of Object.values(plusRecents)) {
     const code = (x.cible || "").split("::")[1]?.split(":")[0] || "";
     const mode = /^ME\d$/.test(code) ? "METRO" : /^(TRAM|TR|T|R)$/.test(code) ? "TRAM" : null;
     if (!mode) continue;
     if (perimeIlevia(x)) continue;   // message périmé
+    // Tram : il est dans le temps réel d'Ilevia (pas le métro). Si des trams sont de nouveau annoncés
+    // aux stations citées dans le message (ou n'importe où si aucune), la panne est finie, même si le message traîne
+    if (mode === "TRAM" && x.type_perturbation === "Perturbation") {
+      trams ??= await tramsEnTempsReel().catch(() => []);
+      if (tramRepart(x, trams)) continue;
+    }
     const t = sansBalises(x.message);
     res.push({ id: x.type_perturbation === "Perturbation" ? `LILLE:${code}` : `LILLE:${x.identifiant_message}`, ville: "LILLE", mode,
                lignes: mode === "METRO" ? [code.replace("ME", "")] : [], grave: x.type_perturbation === "Perturbation",
@@ -180,7 +205,7 @@ async function pannesParis() {
 
 // Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
 export async function pannes(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v6/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v7/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
