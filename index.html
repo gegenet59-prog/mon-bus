@@ -1191,6 +1191,21 @@ function nettoyerMessage(t) {
        .replace(/\s{2,}/g, " ").trim();
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
+// Ilevia laisse ses messages d'incident 24 h ; ses heures finissent par « Z » mais sont à l'heure de Paris.
+// Fin réelle : l'heure écrite dans le message (« jusque 15h 50 ») + 30 min ; sans heure, 3 h après le message.
+function perimeIlevia(x) {
+  const n = new Date(), maintenant = Date.UTC(n.getFullYear(), n.getMonth(), n.getDate(), n.getHours(), n.getMinutes());
+  if (x.heure_fin_prevue && Date.parse(x.heure_fin_prevue) < maintenant) return true;
+  const modif = Date.parse(x.date_modification || "");
+  if (!modif || x.type_perturbation !== "Perturbation") return false;
+  const h = sansBalises(x.message || "").match(/jusqu(?:e|'?\s?(?:à|a|’à))\s*(\d{1,2})\s*h\s*(\d{2})?/i);
+  if (h) {
+    let fin = Math.floor(modif / 86400000) * 86400000 + (+h[1] * 60 + +(h[2] || 0)) * 60000;
+    if (fin < modif - 3600000) fin += 86400000;
+    return maintenant > fin + 30 * 60000;
+  }
+  return maintenant > modif + 3 * 3600000;
+}
 async function afficherPerturbations(r, lignes) {
   const base = new Set(lignes.map(l => l.replace(/^(C\d+)[AB]$/, "$1")));
   let msgs = [];
@@ -1210,6 +1225,7 @@ async function afficherPerturbations(r, lignes) {
       const data = await (await fetch(`${WFS}?${params}`)).json();
       for (const f of data.features) {
         const p = f.properties;
+        if (perimeIlevia(p)) continue;   // incident terminé (Ilevia laisse ses messages 24 h)
         // cible "ILEVIA:LineRef::14:LOC" ; le métro s'écrit ME1/ME2 dans ce flux, M1/M2 dans les horaires
         const code = (p.cible || "").split("::")[1]?.split(":")[0]?.replace(/^ME(\d)$/, "M$1");
         if (code && base.has(code)) msgs.push({ lignes: [code], texte: nettoyerMessage(sansBalises(p.message || "")) });

@@ -93,6 +93,27 @@ async function pannesGtfs(ville) {
   return res;
 }
 
+// Ilevia laisse ses messages d'incident 24 h (heure_fin_prevue = +24 h) alors que la panne dure souvent 10 minutes.
+// Ses heures finissent par « Z » mais sont à l'heure de Paris. Fin réelle : l'heure écrite dans le message
+// (« interrompue jusque 15h 50 ») + 30 min de marge ; sans heure, un incident est oublié au bout de 3 h.
+const heureParis = () => { // l'heure de Paris, écrite comme si c'était de l'UTC (même convention qu'Ilevia)
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+};
+export function perimeIlevia(x, maintenant = heureParis()) {
+  if (x.heure_fin_prevue && Date.parse(x.heure_fin_prevue) < maintenant) return true;
+  const modif = Date.parse(x.date_modification || "");
+  if (!modif || x.type_perturbation !== "Perturbation") return false;
+  const h = sansBalises(x.message).match(/jusqu(?:e|'?\s?(?:à|a|’à))\s*(\d{1,2})\s*h\s*(\d{2})?/i);
+  if (h) {
+    let fin = Math.floor(modif / 86400000) * 86400000 + (+h[1] * 60 + +(h[2] || 0)) * 60000;
+    if (fin < modif - 3600000) fin += 86400000;      // « jusque 0h30 » écrit à 23h50 : le lendemain
+    return maintenant > fin + 30 * 60000;
+  }
+  return maintenant > modif + 3 * 3600000;
+}
+
 async function pannesLille() {
   const p = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
   const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
@@ -103,7 +124,7 @@ async function pannesLille() {
     const code = (x.cible || "").split("::")[1]?.split(":")[0] || "";
     const mode = /^ME\d$/.test(code) ? "METRO" : /^(TRAM|TR|T|R)$/.test(code) ? "TRAM" : null;
     if (!mode) continue;
-    if (x.heure_fin_prevue && Date.parse(x.heure_fin_prevue) < maintenant) continue;   // message périmé
+    if (perimeIlevia(x)) continue;   // message périmé
     const t = sansBalises(x.message);
     res.push({ id: `LILLE:${x.identifiant_message || x.identifiant_perturbation}`, ville: "LILLE", mode,
                lignes: mode === "METRO" ? [code.replace("ME", "")] : [], grave: x.type_perturbation === "Perturbation",
@@ -152,7 +173,7 @@ async function pannesParis() {
 
 // Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
 export async function pannes(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v4/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v5/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
