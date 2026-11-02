@@ -1554,7 +1554,12 @@ async function chargerReseau() {
   for (const [id, nom, commune, la, lo] of arrets) pos[id] = { id, nom, commune, la, lo };
   const parArret = {};
   reseau.p.forEach((p, i) => {
-    p.cumul = [0]; for (const t of p[3]) p.cumul.push(p.cumul.at(-1) + t);   // minutes depuis le 1er arrêt
+    // profils de temps (minutes depuis le 1er arrêt) : bornes par arrêt, et profil le plus fréquent pour le « plan seul »
+    p.minC = p[2].map((_, k) => Math.min(...p[3].map(c => c[k])));
+    p.maxC = p[2].map((_, k) => Math.max(...p[3].map(c => c[k])));
+    const nb = new Array(p[3].length).fill(0);
+    for (const l of Object.values(p[4])) for (const v of l) nb[v % 64]++;
+    p.cumul = p[3][nb.indexOf(Math.max(...nb))] || p[3][0];
     p[2].forEach((id, k) => (parArret[id] ??= []).push([i, k]));
   });
   // voisins à pied (correspondance à moins de 350 m), avec une grille pour aller vite
@@ -1588,11 +1593,25 @@ function preparerHoraires(depart) {
   const cache = {};
   return pi => cache[pi] ??= (() => {
     const p = R.p[pi], l = [];
-    for (const [o, groupes] of jours) for (const g of groupes) for (const m of p[4][g] || []) l.push(m + o * 1440);
-    return l.sort((a, b) => a - b);
+    for (const [o, groupes] of jours) for (const g of groupes) for (const v of p[4][g] || []) l.push([Math.floor(v / 64) + o * 1440, v % 64]);
+    return l.sort((a, b) => a[0] - b[0]);
   })();
 }
-const premierApres = (l, t) => { let a = 0, b = l.length; while (a < b) { const m = (a + b) >> 1; if (l[m] < t) a = m + 1; else b = m; } return a < l.length ? l[a] : null; };
+// Premier trajet du parcours pi qui passe à l'arrêt n° k à partir de « pret » (minutes) : { dep, prof, passage } ou null
+function prochainTrajet(pi, k, pret, horaires) {
+  const p = ITI.reseau.p[pi], l = horaires(pi);
+  let a = 0, b = l.length;
+  const debut = pret - p.maxC[k];
+  while (a < b) { const m = (a + b) >> 1; if (l[m][0] < debut) a = m + 1; else b = m; }
+  let mieux = null;
+  for (let i = a; i < l.length; i++) {
+    const [dep, prof] = l[i];
+    if (mieux && dep + p.minC[k] > mieux.passage) break;
+    const passage = dep + p[3][prof][k];
+    if (passage >= pret && (!mieux || passage < mieux.passage)) mieux = { dep, prof, passage };
+  }
+  return mieux;
+}
 
 // Plus court chemin. sources / cibles : { idArret: minutes à pied }. t0 : minutes depuis minuit du jour choisi.
 // horaires(pi) -> départs triés ; null = mode « plan seul » (attente fixe de 4 min, toutes les lignes)
@@ -1622,15 +1641,15 @@ function calculerIti(sources, cibles, profil, t0, horaires) {
       if (k === p[2].length - 1) continue;
       if (e.etape?.type === "ligne" && R.p[e.etape.p][0] === p[0]) continue;   // pas remonter dans la même ligne
       const pret = e.t + (e.montees ? 1 : 0);                                   // 1 min pour changer de quai
-      let dep;                                                                 // heure de départ du 1er arrêt du trajet pris
+      let dep, temps;                                                          // départ du 1er arrêt du trajet pris, et ses temps
       if (horaires) {
-        const d = premierApres(horaires(pi), pret - p.cumul[k]);
-        if (d === null || d + p.cumul[k] - pret > 720) continue;               // rien dans les 12 h
-        dep = d;
-      } else dep = pret + 4 - p.cumul[k];
-      const passage = dep + p.cumul[k];
+        const tr = prochainTrajet(pi, k, pret, horaires);
+        if (!tr || tr.passage - pret > 720) continue;                          // rien dans les 12 h
+        dep = tr.dep; temps = p[3][tr.prof];
+      } else { temps = p.cumul; dep = pret + 4 - temps[k]; }
+      const passage = dep + temps[k];
       for (let j = k + 1; j < p[2].length; j++) {
-        const t = dep + p.cumul[j];
+        const t = dep + temps[j];
         mettre(p[2][j], { cout: e.cout + (t - e.t) + (e.montees ? profil.changement : 0), t, montees: e.montees + 1, prec: e, apresMarche: false,
                           etape: { type: "ligne", p: pi, de: e.id, a: p[2][j], arrets: j - k, passage, arrivee: t } });
       }
@@ -1651,9 +1670,9 @@ function chronometrer(o, t0, horaires) {
     if (s.type === "marche") { s.debut = t; t += s.min; continue; }
     const p = R.p[s.p], k = p[2].indexOf(s.de), j = p[2].indexOf(s.a, k + 1);
     const pret = t + (s !== o.etapes.find(x => x.type === "ligne") ? 1 : 0);
-    const d = premierApres(horaires(s.p), pret - p.cumul[k]);
-    if (d === null) { s.passage = null; s.arrivee = null; t += p.cumul[j] - p.cumul[k] + 4; continue; }
-    s.passage = d + p.cumul[k]; s.arrivee = d + p.cumul[j]; s.attente = s.passage - pret;
+    const tr = prochainTrajet(s.p, k, pret, horaires);
+    if (!tr) { s.passage = null; s.arrivee = null; t += p.cumul[j] - p.cumul[k] + 4; continue; }
+    s.passage = tr.passage; s.arrivee = tr.dep + p[3][tr.prof][j]; s.attente = s.passage - pret;
     s.dort = s.attente > 60;      // plus d'une heure d'attente : « ne roule pas à cette heure »
     t = s.arrivee;
   }
@@ -1690,6 +1709,17 @@ const pastilleLigne = l => {
   return `<span class="num" style="background:#${couleur || "1e2761"};color:#${texte || "FFFFFF"}"><small>${mode}</small>${echapper(affiche)}</span>`;
 };
 const nomArret = id => titre(ITI.arrets[id]?.nom || "?");
+// Lille : C1 et C3 sont des boucles ; le côté (A ou B) se lit dans l'ordre des arrêts, comme dans l'appli Ilevia
+const REPERES_BOUCLES = { C1: ["CORMONTAIGNE", "CHU EURASANTE"], C3: ["C H DRON", "TOURCOING GARE"] };
+function ligneIti(pi) {
+  const R = ITI.reseau, p = R.p[pi], l = [...R.l[p[0]]];
+  const rep = VILLE === "LILLE" && REPERES_BOUCLES[l[0]];
+  if (rep) {
+    const noms = p[2].map(id => ITI.arrets[id]?.nom), i = noms.indexOf(rep[0]), j = noms.indexOf(rep[1]);
+    if (i >= 0 && j >= 0) { const cote = i < j ? "A" : "B"; return { l: [l[0] + cote, ...l.slice(1)], sens: BOUCLES[l[0]].sens[cote] }; }
+  }
+  return { l, sens: titre(p[1]) };
+}
 // minutes depuis minuit du jour choisi -> « 00:18 », « demain 05:42 »
 function heureIti(min) {
   const base = ITI.quand || new Date(), d = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, Math.round(min));
@@ -1734,10 +1764,20 @@ async function suggerer(champ) {
     const mots = analyser(q).arret, vus = new Set();
     const noms = [...new Set(Object.values(ITI.arrets).map(a => a.nom))];
     const notes = noms.map(n => { const nw = motsUtiles(n); const ok = mots.filter(m => nw.some(w => proche(w, m) || w.startsWith(m))).length; return [n, ok, nw.length]; })
-      .filter(x => x[1] === mots.length && x[1] > 0).sort((a, b) => a[2] - b[2]).slice(0, 6);
+      .filter(x => x[1] === mots.length && x[1] > 0)
+      .sort((a, b) => (motsUtiles(b[0]).join(" ") === mots.join(" ")) - (motsUtiles(a[0]).join(" ") === mots.join(" ")) || a[2] - b[2]).slice(0, 6);
     for (const [n] of notes) {
       if (vus.has(n)) continue; vus.add(n);
-      choix.push({ nom: titre(n), ids: Object.values(ITI.arrets).filter(a => a.nom === n).map(a => a.id) });
+      // même nom à plusieurs endroits (Wagner à Lille et à Wattrelos) : une proposition par endroit, avec la commune
+      const secteurs = [];
+      for (const a of Object.values(ITI.arrets).filter(a => a.nom === n)) {
+        const sct = secteurs.find(x => distance(x.la, x.lo, a.la, a.lo) < 1000);
+        if (sct) sct.ids.push(a.id); else secteurs.push({ la: a.la, lo: a.lo, ids: [a.id], commune: a.commune });
+      }
+      for (const sct of secteurs) {
+        const precision = secteurs.length > 1 ? ` (${sct.commune || voisinDe(Object.values(ITI.arrets).map(a => [a.id, a.nom, a.commune, a.la, a.lo]), sct.la, sct.lo, n)})` : "";
+        choix.push({ nom: titre(n) + precision, ids: sct.ids });
+      }
     }
   }
   afficherSuggestions(choix);
@@ -1836,15 +1876,15 @@ function carteIti(o, i, t0) {
   const etapes = o.etapes.map(s => {
     const bouton = id => `<button class="arretIti" data-id="${id}">${echapper(nomArret(id))}</button>`;
     if (s.type === "marche") return `<li>🚶 ${s.min} min à pied${s.a && !s.fin ? ` jusqu'à ${bouton(s.a)}` : s.fin ? " jusqu'à l'arrivée" : ""}</li>`;
-    const p = R.p[s.p];
-    return `<li>${pastilleLigne(R.l[p[0]])} direction <b>${echapper(titre(p[1]))}</b> ${etat(s)}<br>Monte à ${bouton(s.de)}, descends à ${bouton(s.a)}
+    const li = ligneIti(s.p);
+    return `<li>${pastilleLigne(li.l)} direction <b>${echapper(li.sens)}</b> ${etat(s)}<br>Monte à ${bouton(s.de)}, descends à ${bouton(s.a)}
             <small>(${s.arrets} arrêt${s.arrets > 1 ? "s" : ""}${s.arrivee !== null ? `, arrivée ${heureIti(s.arrivee)}` : ""})</small></li>`;
   }).join("");
   const noms = o.noms.length >= 3 && !o.habituel ? ["⭐ Le meilleur trajet"] : o.noms;
   const depart = o.etapes[0]?.type === "marche" ? o.premierDepart - o.etapes[0].min : o.premierDepart;
   return `<div class="carteIti${i === 0 ? " ouverte" : ""}${dort ? " dortCarte" : ""}"><div class="enteteIti"><span class="nomsIti">${noms.join(" · ")}</span>
     <span class="dureeIti">${dort ? "" : `${o.duree} min`}</span></div>
-    <div class="lignesIti">${lignes.map(s => pastilleLigne(R.l[R.p[s.p][0]])).join(`<span class="fleche">›</span>`)}</div>
+    <div class="lignesIti">${lignes.map(s => pastilleLigne(ligneIti(s.p).l)).join(`<span class="fleche">›</span>`)}</div>
     <div class="aide" style="margin:6px 0 0">${dort ? "🌙 Une ligne ne roule pas à cette heure-là"
       : `Départ ${heureIti(Math.max(t0, depart ?? t0))} · arrivée ${Math.floor(o.arrivee / 1440) === Math.floor(Math.max(t0, depart ?? t0) / 1440) ? heureIti(o.arrivee).split(" ").pop() : heureIti(o.arrivee)}`} · ${o.changements ? `${o.changements} changement${o.changements > 1 ? "s" : ""}` : "direct"}${o.marche ? ` · ${o.marche} min à pied` : ""}</div>
     <ol class="etapesIti">${etapes}</ol></div>`;

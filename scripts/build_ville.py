@@ -79,23 +79,26 @@ def construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes
     """Plan du réseau pour les itinéraires, valable toute la saison :
     {"l": [[code, type, couleur, couleur texte], ...],
      "jours": {"AAAAMMJJ": [n° des groupes qui roulent ce jour-là]},
-     "p": [[n° ligne, direction, [arrêts], [minutes entre deux arrêts], {"n° groupe": [départs du 1er arrêt en minutes]}], ...]}
+     "p": [[n° ligne, direction, [arrêts], [[profil de temps : minutes depuis le 1er arrêt, pour chaque arrêt], ...],
+            {"n° groupe": [départ du 1er arrêt × 64 + n° de profil, ...]}], ...]}
+    Profils de temps : un trajet de midi met plus longtemps qu'un trajet de 6 h ; chaque trajet garde le sien
+    (au plus 64 par parcours, sinon le plus proche), pour que l'heure à chaque arrêt soit celle de l'horaire.
     Groupe = services qui roulent les mêmes jours. Chaque trajet n'est écrit qu'une fois : petit fichier pour toute la saison.
     Un « parcours » = une ligne + une suite d'arrêts ; l'heure de passage à un arrêt = départ + somme des temps."""
     tables_l, idx_l, parcours = [], {}, {}
     for t, liste in ordre.items():
         route, direction, service = tous[t]
-        suite, temps, prec, depart = [], [], None, None
+        suite, cumul, depart = [], [], None
         for _, sid, mn in liste:
             pid = parent_de.get(sid)
             if pid is None or (suite and suite[-1] == sur[pid]):
                 continue
-            if suite:
-                temps.append(max(0.5, (mn - prec) if (mn is not None and prec is not None) else 2))
-            else:
+            if not suite:
                 depart = mn
+            if depart is None:
+                break
             suite.append(sur[pid])
-            prec = mn
+            cumul.append(max(cumul[-1] if cumul else 0, (mn - depart) if mn is not None else (cumul[-1] + 2 if cumul else 0)))
         if len(suite) < 2 or depart is None:
             continue
         if route not in idx_l:
@@ -106,9 +109,17 @@ def construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes
         cle = (route, tuple(suite))
         p = parcours.get(cle)
         if p is None:
-            p = parcours[cle] = [idx_l[route], direction, suite, [round(x, 1) for x in temps], defaultdict(list)]
-        p[4][svc_types[service]].append(depart)
+            p = parcours[cle] = [idx_l[route], direction, suite, [], defaultdict(list)]
+        profil = tuple(cumul)
+        if profil in p[3]:
+            n = p[3].index(profil)
+        elif len(p[3]) < 64:
+            p[3].append(profil); n = len(p[3]) - 1
+        else:   # trop de profils : le plus proche
+            n = min(range(64), key=lambda i: sum(abs(a - b) for a, b in zip(p[3][i], profil)))
+        p[4][svc_types[service]].append(depart * 64 + n)
     for p in parcours.values():
+        p[3] = [list(x) for x in p[3]]
         p[4] = {str(k): sorted(v) for k, v in p[4].items()}
     return {"l": tables_l, "jours": jours_type, "p": list(parcours.values())}
 
