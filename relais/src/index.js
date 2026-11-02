@@ -5,7 +5,7 @@
 //
 // Usage : https://<relais>/?flux=nice   (seuls les flux de la liste ci-dessous sont acceptés)
 
-import { pannes, VILLES_PANNES } from "./pannes.js";
+import { pannes, VILLES_PANNES, heureParis } from "./pannes.js";
 export { Alertes } from "./alertes.js";
 
 const FLUX = {
@@ -75,6 +75,7 @@ export default {
     // Pannes de métro / tram / RER d'une ville : ?flux=pannes&ville=LILLE  (pannes-test : affiche l'erreur éventuelle)
     if (nom === "pannes" || nom === "pannes-test") {
       const ville = (url.searchParams.get("ville") || "").toUpperCase();
+      if (nom === "pannes-test" && url.searchParams.has("heure")) return json({ heureParis: new Date(heureParis()).toISOString(), utc: new Date().toISOString() });
       if (!VILLES_PANNES.includes(ville)) return json([], 200);
       try { return json(await pannes(ville), 200, 60); }
       catch (e) { return nom === "pannes-test" ? new Response(String(e.stack || e), { status: 500, headers: ENTETES_CORS }) : json([], 200); }

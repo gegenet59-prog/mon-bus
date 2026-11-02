@@ -96,7 +96,7 @@ async function pannesGtfs(ville) {
 // Ilevia laisse ses messages d'incident 24 h (heure_fin_prevue = +24 h) alors que la panne dure souvent 10 minutes.
 // Ses heures finissent par « Z » mais sont à l'heure de Paris. Fin réelle : l'heure écrite dans le message
 // (« interrompue jusque 15h 50 ») + 30 min de marge ; sans heure, un incident est oublié au bout de 3 h.
-const heureParis = () => { // l'heure de Paris, écrite comme si c'était de l'UTC (même convention qu'Ilevia)
+export const heureParis = () => { // l'heure de Paris, écrite comme si c'était de l'UTC (même convention qu'Ilevia)
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "2-digit",
     day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date()).map(x => [x.type, x.value]));
   return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
