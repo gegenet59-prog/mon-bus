@@ -80,9 +80,9 @@ def construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes
     {"l": [[code, type, couleur, couleur texte], ...],
      "jours": {"AAAAMMJJ": [n° des groupes qui roulent ce jour-là]},
      "p": [[n° ligne, direction, [arrêts], [[profil de temps : minutes depuis le 1er arrêt, pour chaque arrêt], ...],
-            {"n° groupe": [départ du 1er arrêt × 64 + n° de profil, ...]}], ...]}
+            {"n° groupe": [départ du 1er arrêt × 1024 + n° de profil, ...]}], ...]}
     Profils de temps : un trajet de midi met plus longtemps qu'un trajet de 6 h ; chaque trajet garde le sien
-    (au plus 64 par parcours, sinon le plus proche), pour que l'heure à chaque arrêt soit celle de l'horaire.
+    (au plus 1024 par parcours, sinon le plus proche), pour que l'heure à chaque arrêt soit celle de l'horaire.
     Groupe = services qui roulent les mêmes jours. Chaque trajet n'est écrit qu'une fois : petit fichier pour toute la saison.
     Un « parcours » = une ligne + une suite d'arrêts ; l'heure de passage à un arrêt = départ + somme des temps."""
     tables_l, idx_l, parcours = [], {}, {}
@@ -113,11 +113,11 @@ def construire_reseau(ordre, tous, svc_types, jours_type, parent_de, sur, lignes
         profil = tuple(cumul)
         if profil in p[3]:
             n = p[3].index(profil)
-        elif len(p[3]) < 64:
+        elif len(p[3]) < 1024:
             p[3].append(profil); n = len(p[3]) - 1
         else:   # trop de profils : le plus proche
-            n = min(range(64), key=lambda i: sum(abs(a - b) for a, b in zip(p[3][i], profil)))
-        p[4][svc_types[service]].append(depart * 64 + n)
+            n = min(range(1024), key=lambda i: sum(abs(a - b) for a, b in zip(p[3][i], profil)))
+        p[4][svc_types[service]].append(depart * 1024 + n)
     for p in parcours.values():
         p[3] = [list(x) for x in p[3]]
         p[4] = {str(k): sorted(v) for k, v in p[4].items()}

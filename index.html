@@ -1558,7 +1558,7 @@ async function chargerReseau() {
     p.minC = p[2].map((_, k) => Math.min(...p[3].map(c => c[k])));
     p.maxC = p[2].map((_, k) => Math.max(...p[3].map(c => c[k])));
     const nb = new Array(p[3].length).fill(0);
-    for (const l of Object.values(p[4])) for (const v of l) nb[v % 64]++;
+    for (const l of Object.values(p[4])) for (const v of l) nb[v % 1024]++;
     p.cumul = p[3][nb.indexOf(Math.max(...nb))] || p[3][0];
     p[2].forEach((id, k) => (parArret[id] ??= []).push([i, k]));
   });
@@ -1593,7 +1593,7 @@ function preparerHoraires(depart) {
   const cache = {};
   return pi => cache[pi] ??= (() => {
     const p = R.p[pi], l = [];
-    for (const [o, groupes] of jours) for (const g of groupes) for (const v of p[4][g] || []) l.push([Math.floor(v / 64) + o * 1440, v % 64]);
+    for (const [o, groupes] of jours) for (const g of groupes) for (const v of p[4][g] || []) l.push([Math.floor(v / 1024) + o * 1440, v % 1024]);
     return l.sort((a, b) => a[0] - b[0]);
   })();
 }

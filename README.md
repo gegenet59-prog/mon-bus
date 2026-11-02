@@ -30,6 +30,8 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 `node tests/robot_noms.js BORDEAUX NICE …` : tape le nom de **chaque** arrêt de la ville et vérifie que l'appli retrouve le bon (liste aussi les homonymes).
 `node tests/grandes_stations.js BORDEAUX NICE …` : les 30 stations les plus desservies avec le temps réel (doublons, direction = l'arrêt lui-même, flux en panne).
 
+`python3 tests/verifier_itineraire.py lille [AAAAMMJJ]` : vérifie que l'heure calculée par l'itinéraire est exacte pour tous les trajets de toutes les lignes, à chaque arrêt.
+
 `node tests/verifier_stations_paris.js` : vérifie les 996 stations ferrées d'Île-de-France et le badge des 2 029 lignes, sans consommer de quota PRIM.
 
 ## Pannes métro / tram et alertes
