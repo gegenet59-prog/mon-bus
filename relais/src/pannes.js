@@ -47,12 +47,12 @@ function traduction(buf, plage) {           // TranslatedString -> texte en fran
 
 // Type de chaque ligne (route_id -> [code, type GTFS]), écrit chaque nuit par scripts/build_ville.py
 async function lignesDe(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/lignes/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/lignes/v2/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const r = await fetch(`${SITE}/horaires/${ville.toLowerCase()}/lignes.json`);
   const d = r.ok ? await r.json() : {};
-  await cache.put(cle, new Response(JSON.stringify(d), { headers: { "Cache-Control": "public, max-age=21600" } }));
+  if (r.ok) await cache.put(cle, new Response(JSON.stringify(d), { headers: { "Cache-Control": "public, max-age=21600" } }));
   return d;
 }
 const MODE_GTFS = { 0: "TRAM", 1: "METRO", 2: "TRAIN", 5: "TRAM", 7: "TRAM" };
@@ -152,7 +152,7 @@ async function pannesParis() {
 
 // Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
 export async function pannes(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v3/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v4/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
