@@ -100,8 +100,13 @@ export class Alertes {
       try { liste = (await pannes(ville)).filter(p => p.grave); } catch { continue; }
       const vus = (await this.st.get(`vus:${ville}`)) || {};
       const actuels = Object.fromEntries(liste.map(p => [p.id, p]));
-      const nouvelles = liste.filter(p => !vus[p.id]);
-      const finies = Object.values(vus).filter(p => !actuels[p.id]);
+      let nouvelles = liste.filter(p => !vus[p.id]);
+      let finies = Object.values(vus).filter(p => !actuels[p.id]);
+      // même ligne, nouveau message (incident mis à jour) : ce n'est ni une nouvelle panne ni une fin de panne
+      const memeLigne = (a, b) => a.mode === b.mode && a.lignes.join() === b.lignes.join();
+      const suites = nouvelles.filter(n => finies.some(f => memeLigne(n, f)));
+      nouvelles = nouvelles.filter(n => !suites.includes(n));
+      finies = finies.filter(f => !suites.some(n => memeLigne(n, f)));
       let envois = 0;
       for (const [cle, a] of abonnes) {
         const choix = a.choix[ville] || [];

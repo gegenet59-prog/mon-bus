@@ -1223,9 +1223,16 @@ async function afficherPerturbations(r, lignes) {
       const params = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature",
         typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
       const data = await (await fetch(`${WFS}?${params}`)).json();
+      // un incident mis à jour (« jusque 19h55 » puis « jusque 20h00 ») : seul le message le plus récent compte
+      const recent = {};
+      for (const f of data.features) {
+        const p = f.properties;
+        if (p.type_perturbation === "Perturbation" && !perimeIlevia(p) && (p.date_modification || "") > (recent[p.cible] || "")) recent[p.cible] = p.date_modification || "";
+      }
       for (const f of data.features) {
         const p = f.properties;
         if (perimeIlevia(p)) continue;   // incident terminé (Ilevia laisse ses messages 24 h)
+        if (p.type_perturbation === "Perturbation" && (p.date_modification || "") < recent[p.cible]) continue;
         // cible "ILEVIA:LineRef::14:LOC" ; le métro s'écrit ME1/ME2 dans ce flux, M1/M2 dans les horaires
         const code = (p.cible || "").split("::")[1]?.split(":")[0]?.replace(/^ME(\d)$/, "M$1");
         if (code && base.has(code)) msgs.push({ lignes: [code], texte: nettoyerMessage(sansBalises(p.message || "")) });

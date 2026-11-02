@@ -118,15 +118,22 @@ async function pannesLille() {
   const p = new URLSearchParams({ service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: "dsp_ilevia:perturbations", outputFormat: "application/json" });
   const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
   if (!r.ok) throw new Error(`LILLE ${r.status}`);
-  const res = [], maintenant = Date.now();
+  const res = [];
+  // Ilevia publie un nouveau message à chaque mise à jour d'un incident (« jusque 19h55 » puis « jusque 20h00 ») sans
+  // retirer l'ancien : pour chaque ligne, on ne garde que l'incident le plus récent
+  const plusRecents = {};
   for (const f of (await r.json()).features || []) {
-    const x = f.properties;
+    const x = f.properties, cle = `${x.cible}|${x.type_perturbation}`;
+    if (x.type_perturbation !== "Perturbation" || !plusRecents[cle] || (x.date_modification || "") > (plusRecents[cle].date_modification || ""))
+      plusRecents[x.type_perturbation === "Perturbation" ? cle : x.identifiant_message] = x;
+  }
+  for (const x of Object.values(plusRecents)) {
     const code = (x.cible || "").split("::")[1]?.split(":")[0] || "";
     const mode = /^ME\d$/.test(code) ? "METRO" : /^(TRAM|TR|T|R)$/.test(code) ? "TRAM" : null;
     if (!mode) continue;
     if (perimeIlevia(x)) continue;   // message périmé
     const t = sansBalises(x.message);
-    res.push({ id: `LILLE:${x.identifiant_message || x.identifiant_perturbation}`, ville: "LILLE", mode,
+    res.push({ id: x.type_perturbation === "Perturbation" ? `LILLE:${code}` : `LILLE:${x.identifiant_message}`, ville: "LILLE", mode,
                lignes: mode === "METRO" ? [code.replace("ME", "")] : [], grave: x.type_perturbation === "Perturbation",
                titre: t.split(/[.:]\s/)[0].slice(0, 120), texte: t, fin: x.heure_fin_prevue || null });
   }
@@ -173,7 +180,7 @@ async function pannesParis() {
 
 // Pannes d'une ville (gardées en cache : Paris 15 min pour le quota PRIM, les autres 2 min)
 export async function pannes(ville) {
-  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v5/${ville}`);
+  const cache = caches.default, cle = new Request(`https://relais.mon-bus/pannes/v6/${ville}`);
   const enCache = await cache.match(cle);
   if (enCache) return enCache.json();
   const liste = ville === "LILLE" ? await pannesLille() : ville === "PARIS" ? await pannesParis()
