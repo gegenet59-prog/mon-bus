@@ -38,7 +38,7 @@ export default {
     const url = new URL(requete.url);
     const nom = url.searchParams.get("flux");
     if (!nom) {
-      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-02-pannes-lille", flux: Object.keys(FLUX) }), {
+      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-02-doublons", flux: Object.keys(FLUX) }), {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" },
       });
     }
