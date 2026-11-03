@@ -41,7 +41,7 @@ export default {
     const url = new URL(requete.url);
     const nom = url.searchParams.get("flux");
     if (!nom) {
-      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-03-retards-leger", flux: Object.keys(FLUX) }), {
+      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-03-alertes-erreur", flux: Object.keys(FLUX) }), {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" },
       });
     }
@@ -89,8 +89,11 @@ export default {
     if (["vapid", "abonner", "alerte", "alerte-test"].includes(nom)) {
       const stub = env.ALERTES.get(env.ALERTES.idFromName("principal"));
       const chemin = { vapid: "vapid", abonner: "abonner", alerte: "message", "alerte-test": "test" }[nom];
-      const r = await stub.fetch(`https://alertes/${chemin}?${url.searchParams}`,
-        requete.method === "POST" ? { method: "POST", body: await requete.text() } : {});
+      let r;
+      try {
+        r = await stub.fetch(`https://alertes/${chemin}?${url.searchParams}`,
+          requete.method === "POST" ? { method: "POST", body: await requete.text() } : {});
+      } catch (e) { return new Response(JSON.stringify({ erreur: String(e.message || e) }), { status: 500, headers: { ...ENTETES_CORS, "Content-Type": "application/json" } }); }
       return new Response(r.body, { status: r.status, headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
     }
     // Contrôle du relevé des retards : ?flux=retards-bilan
