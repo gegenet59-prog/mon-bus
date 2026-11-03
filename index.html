@@ -113,6 +113,13 @@
   .rouleIti { color:#1a7f37; font-size:13px; font-weight:600; white-space:nowrap; }
   .dortIti { color:#7a2048; font-size:13px; font-weight:600; }
   .dortCarte { opacity:.92; border:1px dashed #c9b3c0; }
+  .titreIti { margin:22px 0 4px; font-size:16px; color:var(--indigo); }
+  .boutonsIti, .descentesIti { display:none; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .boutonsIti { display:flex; }
+  .carteIti.ouverte .descentesIti { display:flex; }
+  .boutonsIti button, .descentesIti button { background:#eef3ff; color:var(--texte); border:1px solid #c9d6f2; padding:8px 10px; font-size:13px; }
+  .descentesIti small { width:100%; color:var(--gris); font-size:12px; }
+  .oublierIti { margin-top:8px; background:#f2f2f4; color:var(--gris); padding:6px 10px; font-size:12px; }
   .arretIti { background:none; color:var(--bleu); padding:0; font-size:14px; font-weight:600; text-decoration:underline; }
   /* Pannes métro / tram de la ville (bandeau d'accueil) et réglage des alertes */
   .entete-droite { display:flex; align-items:center; gap:8px; }
@@ -1672,7 +1679,7 @@ function chronometrer(o, t0, horaires) {
     const pret = t + (s !== o.etapes.find(x => x.type === "ligne") ? 1 : 0);
     const tr = prochainTrajet(s.p, k, pret, horaires);
     if (!tr) { s.passage = null; s.arrivee = null; t += p.cumul[j] - p.cumul[k] + 4; continue; }
-    s.passage = tr.passage; s.arrivee = tr.dep + p[3][tr.prof][j]; s.attente = s.passage - pret;
+    s.passage = tr.passage; s.arrivee = tr.dep + p[3][tr.prof][j]; s.attente = s.passage - pret; s.dep = tr.dep; s.prof = tr.prof;
     s.dort = s.attente > 60;      // plus d'une heure d'attente : « ne roule pas à cette heure »
     t = s.arrivee;
   }
@@ -1852,19 +1859,74 @@ async function lancerItineraire() {
   }
   // 2) trajet habituel (plan seul) : toujours proposé, avec l'état de chaque ligne à l'heure choisie
   const habituel = calculerIti(sources, cibles, PROFILS[0], t0, null);
-  if (habituel && !vus.has(signature(habituel))) options.push(chronometrer({ ...habituel, sig: signature(habituel), noms: ["🗺️ Trajet habituel"], habituel: true }, t0, horaires));
+  if (habituel && !vus.has(signature(habituel))) { vus.add(signature(habituel)); options.push(chronometrer({ ...habituel, sig: signature(habituel), noms: ["🗺️ Trajet habituel"], habituel: true }, t0, horaires)); }
   else if (habituel) options.find(o => o.sig === signature(habituel))?.noms.push("🗺️ Trajet habituel");
+  // 3) ton habitude : l'arrêt où tu as choisi de descendre pour cette destination (ex. République plutôt que Sacré-Cœur)
+  const cleDest = b.ids ? "a:" + [...b.ids].sort().join(",") : `p:${b.la.toFixed(3)},${b.lo.toFixed(3)}`;
+  const habitudes = (() => { try { return JSON.parse(localStorage.getItem(`descentes_${VILLE}`) || "{}"); } catch { return {}; } })();
+  const pref = habitudes[cleDest];
+  const marcheVers = id => cibles[id] ?? (distance(ITI.arrets[id].la, ITI.arrets[id].lo, ...pb) <= 1200 ? minutesMarche(distance(ITI.arrets[id].la, ITI.arrets[id].lo, ...pb)) : null);
+  if (pref && ITI.arrets[pref] && marcheVers(pref) !== null) {
+    const r = calculerIti(sources, { [pref]: marcheVers(pref) }, PROFILS[0], t0, horaires);
+    if (r) {
+      const sig = signature(r);
+      const deja = options.findIndex(o => o.sig === sig);
+      if (deja >= 0) options.splice(deja, 1);
+      options.unshift(chronometrer({ ...r, sig, noms: [`❤️ Ton habitude : descendre à ${nomArret(pref)}`], prefere: true }, t0, horaires));
+      vus.add(sig);
+    }
+  }
   if (!options.length) { zone.innerHTML = `<p class="aide">Aucune ligne ne relie ces deux endroits.</p>` + lienGoogle(pa, pb); return; }
-  options.sort((x, y) => (x.habituel - y.habituel) || 0);
+  options.sort((x, y) => (y.prefere || 0) - (x.prefere || 0) || (x.habituel || 0) - (y.habituel || 0));
+  // 4) au départ d'une position ou d'une adresse : le meilleur trajet depuis chaque arrêt à moins de 300 m
+  const depuisProches = [];
+  if (a.la) {
+    for (const [id, m] of arretsAutour(...pa, 300).filter(([id]) => ITI.parArret[id]).slice(0, 8)) {
+      const r = calculerIti({ [id]: minutesMarche(m) }, cibles, PROFILS[0], t0, horaires);
+      if (!r) continue;
+      const sig = signature(r);
+      if (vus.has(sig)) continue;
+      vus.add(sig);
+      depuisProches.push(chronometrer({ ...r, sig, noms: [`🚏 Depuis ${nomArret(id)} · ${minutesMarche(m)} min à pied`], arret: id }, t0, horaires));
+    }
+    depuisProches.sort((x, y) => x.arrivee - y.arrivee);
+  }
+  for (const o of [...options, ...depuisProches]) o.descentes = autresDescentes(o, pb, marcheVers);
+  const montres = depuisProches.slice(0, 3), autres = depuisProches.slice(3);
   zone.innerHTML = (aPied <= 20 ? `<p class="aide">🚶 À pied : environ ${aPied} min.</p>` : "")
-    + options.map((o, i) => carteIti(o, i, t0)).join("") + lienGoogle(pa, pb);
-  zone.querySelectorAll(".carteIti").forEach(c => c.onclick = e => { if (!e.target.closest(".arretIti")) c.classList.toggle("ouverte"); });
+    + options.map((o, i) => carteIti(o, i, t0)).join("")
+    + (depuisProches.length ? `<h3 class="titreIti">🚏 Depuis les arrêts autour de toi</h3>` + montres.map(o => carteIti(o, 99, t0)).join("")
+       + (autres.length ? `<div class="boutonsIti">${autres.map(o => `<button data-partir="${o.arret}">Partir de ${echapper(nomArret(o.arret))}</button>`).join("")}</div>` : "") : "")
+    + lienGoogle(pa, pb);
+  zone.querySelectorAll(".carteIti").forEach(c => c.onclick = e => { if (!e.target.closest("button")) c.classList.toggle("ouverte"); });
+  const sauver = h => { try { localStorage.setItem(`descentes_${VILLE}`, JSON.stringify(h)); } catch {} };
+  zone.querySelectorAll("[data-pref]").forEach(btn => btn.onclick = () => { habitudes[cleDest] = btn.dataset.pref; sauver(habitudes); toast(`❤️ Retenu : tu descends à ${nomArret(btn.dataset.pref)}`); lancerItineraire(); });
+  zone.querySelectorAll("[data-oublier]").forEach(btn => btn.onclick = () => { delete habitudes[cleDest]; sauver(habitudes); lancerItineraire(); });
+  zone.querySelectorAll("[data-partir]").forEach(btn => btn.onclick = () => {
+    const id = btn.dataset.partir;
+    ITI.depart = { nom: titre(ITI.arrets[id].nom), ids: [id] }; $("itiDepart").value = ITI.depart.nom; lancerItineraire();
+  });
   zone.querySelectorAll(".arretIti").forEach(btn => btn.onclick = () => {
     const id = btn.dataset.id, nom = ITI.arrets[id].nom;
     fermerItineraire(); history.back();
     $("question").value = titre(nom);
     chercher(titre(nom), { force: { nom, ids: [id], id, commune: "" } });
   });
+}
+
+// Autres arrêts où descendre du dernier bus (un arrêt plus tôt quand ça bouchonne, par exemple), avec l'heure d'arrivée
+function autresDescentes(o, pb, marcheVers) {
+  const s = [...o.etapes].reverse().find(x => x.type === "ligne");
+  if (!s || s.prof === undefined || o.arrivee === undefined) return [];
+  const p = ITI.reseau.p[s.p], k = p[2].indexOf(s.de), res = [];
+  for (let j = k + 1; j < p[2].length; j++) {
+    const id = p[2][j];
+    if (id === s.a) continue;
+    const w = marcheVers(id);
+    if (w === null || w > 15) continue;
+    res.push({ id, marche: w, arrivee: s.dep + p[3][s.prof][j] + w });
+  }
+  return res.filter(x => x.arrivee <= o.arrivee + 6).sort((x, y) => x.arrivee - y.arrivee).slice(0, 3);
 }
 
 function carteIti(o, i, t0) {
@@ -1887,7 +1949,12 @@ function carteIti(o, i, t0) {
     <div class="lignesIti">${lignes.map(s => pastilleLigne(ligneIti(s.p).l)).join(`<span class="fleche">›</span>`)}</div>
     <div class="aide" style="margin:6px 0 0">${dort ? "🌙 Une ligne ne roule pas à cette heure-là"
       : `Départ ${heureIti(Math.max(t0, depart ?? t0))} · arrivée ${Math.floor(o.arrivee / 1440) === Math.floor(Math.max(t0, depart ?? t0) / 1440) ? heureIti(o.arrivee).split(" ").pop() : heureIti(o.arrivee)}`} · ${o.changements ? `${o.changements} changement${o.changements > 1 ? "s" : ""}` : "direct"}${o.marche ? ` · ${o.marche} min à pied` : ""}</div>
-    <ol class="etapesIti">${etapes}</ol></div>`;
+    <ol class="etapesIti">${etapes}</ol>
+    ${o.descentes?.length ? `<div class="descentesIti">Ou descends à : ${o.descentes.map(d => {
+      const ecart = Math.round(d.arrivee - o.arrivee);
+      return `<button data-pref="${d.id}">${echapper(nomArret(d.id))} · ${d.marche} min à pied · ${ecart === 0 ? "même heure" : ecart > 0 ? `+${ecart} min` : `${ecart} min`}</button>`;
+    }).join("")}<small>Touche un arrêt pour que l'appli s'en souvienne pour cette destination.</small></div>` : ""}
+    ${o.prefere ? `<button class="oublierIti" data-oublier="1">Oublier cette habitude</button>` : ""}</div>`;
 }
 
 function lienGoogle(pa, pb) {
