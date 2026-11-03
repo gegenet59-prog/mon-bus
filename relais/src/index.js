@@ -7,6 +7,7 @@
 
 import { pannes, VILLES_PANNES, heureParis } from "./pannes.js";
 export { Alertes } from "./alertes.js";
+export { Retards } from "./retards.js";
 
 const FLUX = {
   // GTFS-RT « trip updates » (protobuf)
@@ -31,6 +32,8 @@ export default {
     const paris = new Date(evenement.scheduledTime).getUTCMinutes() % 15 < 5 ? "1" : "0";
     const stub = env.ALERTES.get(env.ALERTES.idFromName("principal"));
     ctx.waitUntil(stub.fetch(`https://alertes/verifier?paris=${paris}`));
+    // relevé des retards de Lille (pour l'itinéraire, plus tard)
+    ctx.waitUntil(env.RETARDS.get(env.RETARDS.idFromName("lille")).fetch("https://retards/relever"));
   },
 
   async fetch(requete, env, ctx) {
@@ -38,7 +41,7 @@ export default {
     const url = new URL(requete.url);
     const nom = url.searchParams.get("flux");
     if (!nom) {
-      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-02-tram-temps-reel", flux: Object.keys(FLUX) }), {
+      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-03-releve-retards", flux: Object.keys(FLUX) }), {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" },
       });
     }
@@ -89,6 +92,11 @@ export default {
       const r = await stub.fetch(`https://alertes/${chemin}?${url.searchParams}`,
         requete.method === "POST" ? { method: "POST", body: await requete.text() } : {});
       return new Response(r.body, { status: r.status, headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
+    }
+    // Contrôle du relevé des retards : ?flux=retards-bilan
+    if (nom === "retards-bilan") {
+      const r = await env.RETARDS.get(env.RETARDS.idFromName("lille")).fetch("https://retards/bilan");
+      return new Response(r.body, { headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
     }
     const source = FLUX[nom];
     if (!source) return new Response("Flux inconnu", { status: 404, headers: ENTETES_CORS });

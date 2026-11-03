@@ -319,6 +319,18 @@ def main():
                   f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(sortie, "arrets.json"), "w", encoding="utf-8") as f:
         json.dump(arrets, f, ensure_ascii=False, separators=(",", ":"))
+    # Horaires prévus d'aujourd'hui par quai (code d'arrêt physique) et par ligne : sert au relais pour mesurer les retards
+    # (il compare l'heure annoncée en temps réel à l'heure prévue la plus proche)
+    jour = aujourd_hui.strftime("%Y%m%d")
+    par_quai = defaultdict(lambda: defaultdict(list))
+    for liste in par_arret.values():
+        for d, minutes, route, direction, quai, t, s, via in liste:
+            if d == jour:
+                code = lignes.get(route, [route])[0]
+                par_quai[stops.get(quai, {}).get("stop_code") or quai][code].append(minutes)
+    with open(os.path.join(sortie, "prevu_quais.json"), "w", encoding="utf-8") as f:
+        json.dump({"jour": jour, "q": {q: {l: sorted(set(m)) for l, m in d.items()} for q, d in par_quai.items()}},
+                  f, ensure_ascii=False, separators=(",", ":"))
     # Plan du réseau pour les itinéraires : suite des arrêts de chaque ligne, temps entre arrêts, trajets par heure
     with open(os.path.join(sortie, "reseau.json"), "w", encoding="utf-8") as f:
         json.dump(reseau, f, ensure_ascii=False, separators=(",", ":"))

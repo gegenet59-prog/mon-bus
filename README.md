@@ -48,3 +48,9 @@ Bandeau « 🧭 Itinéraire » à l'accueil → écran séparé (départ, arriv�
 `build_ville.py` écrit chaque nuit `reseau.json` (suite des arrêts de chaque ligne, temps entre arrêts, nombre de trajets par heure).
 Toute la saison : départs de chaque trajet par « groupe de jours ». Calcul horaire sur le téléphone (Dijkstra), 4 critères + trajet habituel avec l'état de chaque ligne ; partir maintenant ou à une date et heure.
 les lignes qui ne roulent pas à l'heure demandée sont écartées. Paris : lien Google Maps.
+
+## Relevé des retards (Lille)
+
+Depuis le 3 novembre 2026, le relais (Durable Object `Retards`, `relais/src/retards.js`) compare toutes les 5 minutes l'heure annoncée
+en temps réel par Ilevia à l'heure prévue (`horaires/lille/prevu_quais.json`, refait chaque nuit) pour chaque bus sur le point de passer.
+Il garde des totaux par ligne, quai, type de jour et heure. Contrôle : `?flux=retards-bilan`. Servira à corriger l'itinéraire aux heures de bouchons.

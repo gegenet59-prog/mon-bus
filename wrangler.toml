@@ -10,9 +10,18 @@ workers_dev = true
 name = "ALERTES"
 class_name = "Alertes"
 
+[[durable_objects.bindings]]
+name = "RETARDS"
+class_name = "Retards"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Alertes"]
+
+# Relevé des retards (Lille), même principe
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Retards"]
 
 # Vérification des pannes toutes les 5 minutes
 [triggers]
