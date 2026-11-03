@@ -2,21 +2,19 @@
 // dans les 5 minutes, compare l'heure annoncée à l'heure prévue la plus proche (horaires/lille/prevu_quais.json).
 // On ne garde que des totaux, par ligne + quai + type de jour + heure : nombre de bus, somme des retards, somme des carrés,
 // nombre de retards de 5 min ou plus. De quoi calculer plus tard des moyennes et le « mauvais jour » (1 fois sur 5).
-// Stockage : Durable Object « Retards » (SQLite), quelques Mo au plus même après des mois.
+// Stockage : Durable Object « Retards », quelques centaines de Ko même après des mois.
 
 import { heureParis } from "./pannes.js";
 
 const SITE = "https://gegenet59-prog.github.io/mon-bus";
 const typeJour = d => [6, 0].includes(d.getUTCDay()) ? (d.getUTCDay() === 6 ? "sam" : "dim") : "sem";
 
+// Offre gratuite Cloudflare : 100 000 lignes écrites et 5 millions de lignes lues par jour (pour tous les Durable Objects
+// du compte). Une première version écrivait une ligne par bus et les a dépassés en une matinée, ce qui a bloqué aussi les alertes.
+// Désormais : quelques « paquets » seulement par relevé (un par type de jour + heure, et la liste courte des bus déjà comptés),
+// soit environ 3 écritures toutes les 5 minutes (~900 par jour).
 export class Retards {
-  constructor(ctx, env) {
-    this.ctx = ctx; this.sql = ctx.storage.sql; this.prevu = null;
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS retards (cle TEXT PRIMARY KEY, ligne TEXT, quai TEXT, jour TEXT, heure INTEGER,
-                   n INTEGER, somme REAL, carres REAL, gros INTEGER)`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS vus (cle TEXT PRIMARY KEY, t INTEGER)`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS journal (jour TEXT PRIMARY KEY, releves INTEGER, bus INTEGER)`);
-  }
+  constructor(ctx, env) { this.st = ctx.storage; this.prevu = null; }
 
   async horairesPrevus(jour) {
     if (this.prevu?.jour === jour) return this.prevu;
@@ -38,6 +36,10 @@ export class Retards {
     const r = await fetch(`https://data.lillemetropole.fr/geoserver/wfs?${p}`);
     if (!r.ok) return { erreur: r.status };
     const minuit = Date.UTC(ici.getUTCFullYear(), ici.getUTCMonth(), ici.getUTCDate());
+    const tj = typeJour(ici);
+    const vus = (await this.st.get("vus")) || {};             // bus déjà comptés (on oublie au bout d'une heure)
+    for (const [k, t] of Object.entries(vus)) if (t < maintenant - 3600000) delete vus[k];
+    const paquets = {};                                       // "a:sem:17" -> { "ligne|quai": [n, somme, carrés, gros] }
     let bus = 0;
     for (const f of (await r.json()).features || []) {
       const { code_ligne: ligne, code_arret_physique: quai, heure_estimee_depart: h } = f.properties;
@@ -46,25 +48,24 @@ export class Retards {
       const liste = prevu.q[quai]?.[ligne];
       if (!liste) continue;
       const annonce = (t - minuit) / 60000;
-      // heure prévue la plus proche (dans ±30 min)
       let a = 0, b = liste.length;
       while (a < b) { const m = (a + b) >> 1; if (liste[m] < annonce) a = m + 1; else b = m; }
       const proches = [liste[a - 1], liste[a]].filter(x => x !== undefined && Math.abs(x - annonce) <= 30);
       if (!proches.length) continue;
       const sched = proches.sort((x, y) => Math.abs(x - annonce) - Math.abs(y - annonce))[0];
       const vu = `${jour}|${ligne}|${quai}|${sched}`;
-      if (this.sql.exec("SELECT 1 FROM vus WHERE cle = ?", vu).toArray().length) continue;   // ce bus est déjà compté
-      this.sql.exec("INSERT INTO vus (cle, t) VALUES (?, ?)", vu, maintenant);
+      if (vus[vu]) continue;
+      vus[vu] = maintenant;
       const retard = Math.round((annonce - sched) * 10) / 10;
-      const tj = typeJour(ici), heure = Math.floor(sched / 60) % 24;
-      const cle = `${ligne}|${quai}|${tj}|${heure}`;
-      this.sql.exec(`INSERT INTO retards (cle, ligne, quai, jour, heure, n, somme, carres, gros) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-                     ON CONFLICT(cle) DO UPDATE SET n = n + 1, somme = somme + excluded.somme, carres = carres + excluded.carres, gros = gros + excluded.gros`,
-                     cle, ligne, quai, tj, heure, retard, retard * retard, retard >= 5 ? 1 : 0);
+      const cle = `a:${tj}:${Math.floor(sched / 60) % 24}`;
+      paquets[cle] ??= (await this.st.get(cle)) || {};
+      const x = (paquets[cle][`${ligne}|${quai}`] ??= [0, 0, 0, 0]);
+      x[0]++; x[1] = Math.round((x[1] + retard) * 10) / 10; x[2] = Math.round(x[2] + retard * retard); x[3] += retard >= 5 ? 1 : 0;
       bus++;
     }
-    this.sql.exec(`INSERT INTO journal (jour, releves, bus) VALUES (?, 1, ?) ON CONFLICT(jour) DO UPDATE SET releves = releves + 1, bus = bus + excluded.bus`, jour, bus);
-    this.sql.exec("DELETE FROM vus WHERE t < ?", maintenant - 2 * 86400000);   // la mémoire des bus vus ne sert que 2 jours
+    const journal = (await this.st.get("journal")) || {};
+    journal[jour] = [(journal[jour]?.[0] || 0) + 1, (journal[jour]?.[1] || 0) + bus];
+    await this.st.put({ ...paquets, vus, journal });          // une seule écriture groupée
     return { bus };
   }
 
@@ -72,13 +73,17 @@ export class Retards {
     const action = new URL(requete.url).pathname.slice(1);
     const ok = d => new Response(JSON.stringify(d, null, 1), { headers: { "Content-Type": "application/json; charset=utf-8" } });
     if (action === "relever") return ok(await this.relever());
-    if (action === "bilan") {    // contrôle : jours enregistrés, nombre de bus, lignes les plus en retard
-      const journal = this.sql.exec("SELECT * FROM journal ORDER BY jour DESC LIMIT 14").toArray();
-      const total = this.sql.exec("SELECT COUNT(*) AS cles, SUM(n) AS bus FROM retards").toArray()[0];
-      const lignes = this.sql.exec(`SELECT ligne, SUM(n) AS bus, ROUND(SUM(somme) / SUM(n), 1) AS retard_moyen,
-                                   ROUND(100.0 * SUM(gros) / SUM(n)) AS pct_5min_ou_plus FROM retards GROUP BY ligne HAVING bus >= 20
-                                   ORDER BY retard_moyen DESC LIMIT 15`).toArray();
-      return ok({ total, journal, lignes_les_plus_en_retard: lignes });
+    if (action === "bilan") {    // contrôle : jours enregistrés (relevés, bus), lignes les plus en retard
+      const journal = Object.entries((await this.st.get("journal")) || {}).slice(-14).map(([j, [releves, bus]]) => ({ jour: j, releves, bus }));
+      const parLigne = {};
+      for (const paquet of (await this.st.list({ prefix: "a:" })).values())
+        for (const [k, [n, somme, , gros]] of Object.entries(paquet)) {
+          const l = (parLigne[k.split("|")[0]] ??= [0, 0, 0]); l[0] += n; l[1] += somme; l[2] += gros;
+        }
+      const lignes = Object.entries(parLigne).filter(([, v]) => v[0] >= 20)
+        .map(([ligne, [bus, somme, gros]]) => ({ ligne, bus, retard_moyen: Math.round(somme / bus * 10) / 10, pct_5min_ou_plus: Math.round(100 * gros / bus) }))
+        .sort((a, b) => b.retard_moyen - a.retard_moyen).slice(0, 15);
+      return ok({ bus: Object.values(parLigne).reduce((t, v) => t + v[0], 0), journal, lignes_les_plus_en_retard: lignes });
     }
     return new Response("?", { status: 404 });
   }

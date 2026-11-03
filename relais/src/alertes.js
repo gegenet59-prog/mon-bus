@@ -122,7 +122,8 @@ export class Alertes {
         if (code === 404 || code === 410) await this.st.delete(cle);   // abonnement supprimé par le téléphone
         else envois++;
       }
-      await this.st.put(`vus:${ville}`, Object.fromEntries(liste.map(p => [p.id, { id: p.id, mode: p.mode, lignes: p.lignes, titre: p.titre, texte: "" }])));
+      const nouveauVus = Object.fromEntries(liste.map(p => [p.id, { id: p.id, mode: p.mode, lignes: p.lignes, titre: p.titre, texte: "" }]));
+      if (JSON.stringify(nouveauVus) !== JSON.stringify(vus)) await this.st.put(`vus:${ville}`, nouveauVus);   // écrire seulement si ça change (quota)
       bilan[ville] = { pannes: liste.length, nouvelles: nouvelles.length, finies: finies.length, envois };
     }
     return bilan;
