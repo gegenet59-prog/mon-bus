@@ -37,8 +37,8 @@ export class Retards {
     if (!r.ok) return { erreur: r.status };
     const minuit = Date.UTC(ici.getUTCFullYear(), ici.getUTCMonth(), ici.getUTCDate());
     const tj = typeJour(ici);
-    const vus = (await this.st.get("vus")) || {};             // bus déjà comptés (on oublie au bout d'une heure)
-    for (const [k, t] of Object.entries(vus)) if (t < maintenant - 3600000) delete vus[k];
+    const vus = (await this.st.get("vus")) || {};             // bus déjà comptés (oubliés au bout de 20 min : la valeur reste petite, < 2 Mo)
+    for (const [k, t] of Object.entries(vus)) if (t < maintenant - 20 * 60000) delete vus[k];
     const paquets = {};                                       // "a:sem:17" -> { "ligne|quai": [n, somme, carrés, gros] }
     let bus = 0;
     for (const f of (await r.json()).features || []) {
