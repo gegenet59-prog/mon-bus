@@ -21,8 +21,12 @@
   .entete { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0 14px; }
   .entete .appli { display:block; font-size:13px; font-weight:600; color:var(--bleu); letter-spacing:.2px; }
   .entete #salut { font-size:28px; font-weight:700; color:var(--indigo); line-height:1.1; }
-  .tuiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
-  .tuile { display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:18px; min-height:118px;
+  /* Autour de moi : 1/3 moins large ; Parler : 1/3 plus large (1fr / 2fr) ; les deux 1/3 plus hautes (118 -> 157 px).
+     Parler est coupé en deux : Parler en haut, Écouter (relit le dernier résultat) en bas */
+  .tuiles { display:grid; grid-template-columns:1fr 2fr; gap:10px; margin-bottom:12px; }
+  .colParler { display:grid; grid-template-rows:1fr 1fr; gap:8px; min-height:157px; }
+  .colParler .tuile { min-height:0; flex-direction:row; align-items:center; justify-content:flex-start; gap:12px; padding:12px 16px; }
+  .tuile { display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:18px; min-height:157px;
            padding:16px; border-radius:22px; color:#fff; text-align:left; font-size:18px; font-weight:700; }
   .tuile svg { width:30px; height:30px; }
   .tuile small { display:block; font-size:12px; font-weight:500; opacity:.85; margin-top:2px; }
@@ -30,6 +34,7 @@
   #micro { background:var(--bordeaux); user-select:none; -webkit-user-select:none; touch-action:none; }
   #micro.ecoute { background:#1a7f37; }
   #micro:disabled { opacity:.6; }
+  #ecouter { background:#5a1736; }
   .aide { color:var(--gris); font-size:14px; margin:10px 2px; }
   #recents { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
   #recents button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
@@ -153,7 +158,10 @@
   <div id="toast"></div>
   <div class="tuiles">
     <button id="gps" class="tuile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span>Autour de moi</span></button>
+    <div class="colParler">
     <button id="micro" class="tuile" aria-label="Parler : reste appuyé pour dire l'arrêt et la ligne"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span><span id="microTexte">Parler</span><small id="microAide">Reste appuyé</small></span></button>
+    <button id="ecouter" class="tuile" aria-label="Écouter : lire à voix haute les derniers horaires affichés"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg><span>Écouter<small>Lit les derniers horaires</small></span></button>
+    </div>
   </div>
   <button id="itiBtn" class="bandeauIti"><span>🧭 Itinéraire</span><span>›</span></button>
   <div id="pannes"></div>
@@ -511,6 +519,7 @@ function libelleur(items) {
 // ===================== Point d'entrée =====================
 // opts.force : arrêt déjà connu (Autour de moi) · opts.silencieux : rafraîchissement auto · opts.voix : lire la réponse
 let DERNIERE = null;
+let ECOUTER = null;   // lecture du dernier résultat affiché (tuile « Écouter »)
 async function chercher(question, opts = {}) {
   question = question.trim();
   if (!question) return;
@@ -1132,7 +1141,6 @@ function afficher(r, liste, question, opts) {
     html += `<div class="ligne"><span class="num"${style}><small>${premier.nomMode || ""}</small>${premier.code ?? premier.ligne}</span><span class="sens">→ ${titre(sens)}</span>
              <span class="min">${quand(premier, maintenant)}${suivants.length ? `<small>puis ${suivants.map(p => quand(p, maintenant, true)).join(", ")}</small>` : ""}</span></div>`;
   }
-  html += `<div class="actions"><button id="btnEcouter">🔊 Écouter</button></div>`;
   if (VILLE === "LILLE" && lignesAff.some(([, c]) => c[0].mode === "TRAIN"))
     html += `<p class="aide">🎫 Les tickets Ilevia sont valables dans le TER pour voyager entre deux gares de la métropole.
              <a href="https://www.ter.sncf.com/hauts-de-france/tarifs-cartes/autres-tarifs-ter/tarifs-transports-en-commun/voyager-en-ter-aux-tarifs-ilevia">Conditions sur ter.sncf.com</a></p>`;
@@ -1141,7 +1149,7 @@ function afficher(r, liste, question, opts) {
   // Étoile à côté du nom : met l'ARRÊT en favori (juste son nom ; un clic dessus montre toutes ses lignes)
   // (on garde l'arrêt PRÉCIS : « Wagner » de Lille et pas celui de Wattrelos)
   $("btnFavori").onclick = () => { basculerFavori(titre(arret), r.precis); afficher(r, liste, question, { silencieux: true }); };
-  $("btnEcouter").onclick = () => parler(arret, lignesAff);
+  ECOUTER = () => parler(arret, lignesAff);   // la tuile « Écouter » de l'accueil relit ce résultat
   if (opts.voix) parler(arret, lignesAff);
   afficherPerturbations(r, lignesAff.map(([cle]) => cle.split("|")[1]));
 }
@@ -1209,6 +1217,10 @@ function montrerRecents() {
 }
 
 // ===================== Réponse à voix haute =====================
+$("ecouter").onclick = () => {
+  if (ECOUTER && $("resultats").innerHTML.trim()) ECOUTER();
+  else if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance("Cherche d'abord un arrêt, puis appuie sur Écouter."); u.lang = "fr-FR"; speechSynthesis.cancel(); speechSynthesis.speak(u); }
+};
 function parler(arret, lignesAff) {
   if (!window.speechSynthesis) return;
   const maintenant = new Date();
