@@ -647,7 +647,9 @@ async function chercherLille(arret, force) {
       if (ids.includes(id)) continue;
       const proche250 = ici.some(x => distance(x[3], x[4], a, b) < 250);
       const m1 = motsDe(nom), m2 = motsDe(n2);
-      if (proche250 && m2.length >= 2 && (m2.every(w => m1.includes(w)) || m1.every(w => m2.includes(w)))) ids.push(id);
+      // un mot abrégé compte aussi : « EP Montesquieu » (bus) = « Epeule Montesquieu » (métro)
+      const dans = (w, l) => l.some(v => v === w || (w.length >= 2 && v.length > w.length && v.startsWith(w)) || (v.length >= 2 && w.length > v.length && w.startsWith(v)));
+      if (proche250 && m2.length >= 2 && (m2.every(w => dans(w, m1)) || m1.every(w => dans(w, m2)))) ids.push(id);
     }
   } catch {}
   const fichiers = (await Promise.all(ids.map(id => chargerCompact("lille", id)))).filter(Boolean);
