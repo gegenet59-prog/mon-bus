@@ -2002,6 +2002,8 @@ choisirVille(VILLE);
     }, () => {}, { maximumAge: 300000, timeout: 10000 });
   } catch {}
 })();
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
 </body>
 </html>

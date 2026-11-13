@@ -5,6 +5,7 @@ const RELAIS = "https://mon-bus.gegenet59.workers.dev/";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", () => {});   // présent pour que Chrome propose « Installer l'application » (ne touche à aucune requête)
 
 self.addEventListener("push", e => e.waitUntil((async () => {
   let m = { titre: "Mon bus", texte: "Info trafic : ouvre l'appli pour voir le détail." };
