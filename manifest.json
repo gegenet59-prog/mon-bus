@@ -3,7 +3,7 @@
   "short_name": "Mon bus",
   "description": "Prochains passages Lille (Ilevia) et Paris (Île-de-France Mobilités), au clavier ou à la voix",
   "lang": "fr",
-  "id": "./",
+  "id": "/mon-bus/",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
