@@ -41,7 +41,7 @@ export default {
     const url = new URL(requete.url);
     const nom = url.searchParams.get("flux");
     if (!nom) {
-      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-03-alertes-erreur", flux: Object.keys(FLUX) }), {
+      return new Response(JSON.stringify({ relais: "Mon bus", version: "2026-11-15-sonde", flux: Object.keys(FLUX) }), {
         headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" },
       });
     }
@@ -95,6 +95,15 @@ export default {
           requete.method === "POST" ? { method: "POST", body: await requete.text() } : {});
       } catch (e) { return new Response(JSON.stringify({ erreur: String(e.message || e) }), { status: 500, headers: { ...ENTETES_CORS, "Content-Type": "application/json" } }); }
       return new Response(r.body, { status: r.status, headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
+    }
+    // Sonde temporaire : lire une page du site ilevia.fr (test info trafic) ?flux=sonde-ilevia&chemin=/fr/...
+    if (nom === "sonde-ilevia") {
+      const chemin = url.searchParams.get("chemin") || "/";
+      if (!chemin.startsWith("/")) return new Response("chemin invalide", { status: 400, headers: ENTETES_CORS });
+      const hote = url.searchParams.get("hote") === "api" ? "https://api.ilevia.fr" : "https://www.ilevia.fr";
+      const r = await fetch(hote + chemin, { headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) Chrome/124 Mobile", "Accept": "text/html,application/json" }, redirect: "follow" });
+      const t = await r.text();
+      return new Response(`HTTP ${r.status} ${r.url}\n${r.headers.get("content-type")}\n\n${t.slice(0, 200000)}`, { headers: { ...ENTETES_CORS, "Content-Type": "text/plain; charset=utf-8" } });
     }
     // Contrôle du relevé des retards : ?flux=retards-bilan
     if (nom === "retards-bilan") {
