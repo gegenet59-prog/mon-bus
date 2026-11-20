@@ -78,6 +78,16 @@
   .itin { flex:none; width:36px; height:36px; border-radius:50%; background:#e6f1fb; color:#185fa5; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
   .itin:active { transform:scale(.95); }
   h2.avec-itin { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .champQ { position:relative; flex:1; display:flex; }
+  .champQ input { padding-right:44px; width:100%; }
+  #effacerQ { position:absolute; right:6px; top:50%; transform:translateY(-50%); width:34px; height:34px; padding:0; border-radius:50%;
+              background:#e6e8ef; color:#555; font-size:15px; line-height:1; }
+  #effacerQ[hidden] { display:none; }
+  #suggQ { display:flex; flex-direction:column; gap:4px; margin:8px 0 10px; }
+  #suggQ:empty { display:none; }
+  #suggQ button { background:#fff; color:var(--texte); text-align:left; padding:12px 14px; font-size:16px; border:1px solid #e3e6ef; border-radius:12px; }
+  #suggQ button small { color:var(--gris); font-size:13px; margin-left:6px; }
+  #suggQ button b { font-weight:800; }
   #favoris { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
   #favoris button { background:#fff; color:var(--texte); border:1px solid #ddd; padding:8px 12px; font-size:14px; }
   .outils-arret { display:flex; align-items:center; gap:8px; }
@@ -167,9 +177,13 @@
   <div id="pannes"></div>
   <div id="proches"></div>
   <form id="formulaire">
-    <input id="question" placeholder="ex : 14 C1 République Beaux-Arts" autocomplete="off">
+    <div class="champQ">
+      <input id="question" placeholder="ex : 14 C1 République Beaux-Arts" autocomplete="off" autocapitalize="off" enterkeyhint="search">
+      <button type="button" id="effacerQ" aria-label="Effacer" hidden>✕</button>
+    </div>
     <button>OK</button>
   </form>
+  <div id="suggQ"></div>
   <p class="aide" id="aideVille"></p>
   <div id="favoris"></div>
   <div id="recents"></div>
@@ -1410,7 +1424,81 @@ async function autourDeMoi() {
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
 }
 
-$("formulaire").onsubmit = e => { e.preventDefault(); $("question").blur(); chercher($("question").value); };
+$("formulaire").onsubmit = e => { e.preventDefault(); $("question").blur(); $("suggQ").innerHTML = ""; chercher($("question").value); };
+
+// ===================== Croix ✕ et prédiction d'arrêts dans la barre de recherche =====================
+// Liste des arrêts de la ville choisie (chargée une fois, gardée en mémoire) : { nom, mots, force?, ferre? }
+const NOMS_PRED = {};
+async function nomsDeLaVille() {
+  const v = VILLE;
+  if (NOMS_PRED[v]) return NOMS_PRED[v];
+  let liste = [];
+  try {
+    if (v === "PARIS") {
+      ARRETS_PARIS ??= await (await fetch("horaires/arrets_paris.json")).json();
+      liste = ARRETS_PARIS.map(([num, label, , , ferre]) => ({ nom: label, mots: motsUtiles(normaliser(sansCommune(label))), ferre: !!ferre,
+        force: { zone: { id: `stop_area:IDFM:${num}`, name: sansCommune(label), label } } }));
+    } else {
+      const conf = villeActuelle();
+      const noms = v === "LILLE" ? Object.keys(await chargerIndex())
+        : conf.gtfs ? Object.keys((await (await fetch(`horaires/${conf.gtfs}/stations.json`)).json()).stations || {}) : [];
+      liste = noms.map(n => ({ nom: n, mots: motsUtiles(n) }));
+    }
+  } catch {}
+  return NOMS_PRED[v] = liste;
+}
+const motDebute = (w, m) => w.startsWith(m) || proche(w, m);
+async function predire() {
+  const boite = $("suggQ"), q = $("question").value.trim();
+  $("effacerQ").hidden = !$("question").value;
+  if (q.length < 2) { boite.innerHTML = ""; return; }
+  const mots = analyser(q).arret.filter(m => m.length > 0);
+  if (!mots.length) { boite.innerHTML = ""; return; }
+  const liste = await nomsDeLaVille();
+  if ($("question").value.trim() !== q) return;   // on a retapé entre-temps
+  const entiers = mots.join(" ");
+  const note = x => (normaliser(sansCommune(x.nom)).startsWith(entiers) ? 0 : 2) + (x.ferre ? 0 : 1);
+  // Favoris d'abord, puis le reste de la ville
+  const favs = lireListe("favoris").map(f => ({ nom: nomFavori(f), f, mots: motsUtiles(normaliser(sansCommune(nomFavori(f)))) }))
+    .filter(x => mots.every(m => x.mots.some(w => motDebute(w, m))));
+  const noms = new Set(favs.map(x => normaliser(x.nom)));
+  const autres = liste.filter(x => mots.every(m => x.mots.some(w => motDebute(w, m))) && !noms.has(normaliser(x.nom)))
+    .sort((a, b) => note(a) - note(b) || a.nom.length - b.nom.length).slice(0, 6 - Math.min(favs.length, 3));
+  const choix = [...favs.slice(0, 3).map(x => ({ ...x, fav: true })), ...autres].slice(0, 6);
+  // Les lignes déjà tapées (« 14 C1 rep ») sont gardées devant le nom choisi
+  const toks = q.split(/\s+/), estNom = t => { const n = normaliser(t); return n && mots.some(m => m === n || m.startsWith(n) || n.startsWith(m)); };
+  const premier = toks.findIndex(estNom);
+  const gardes = premier > 0 ? toks.slice(0, premier).join(" ") : "";
+  boite.innerHTML = "";
+  for (const c of choix) {
+    const b = document.createElement("button");
+    b.type = "button";
+    const nom = c.fav ? c.nom : titre(c.nom);
+    b.innerHTML = (c.fav ? "⭐ " : "") + echapper(nom);
+    // pointerdown : le téléphone ne ferme pas le clavier avant le clic
+    b.onpointerdown = e => e.preventDefault();
+    b.onclick = () => {
+      boite.innerHTML = "";
+      $("question").value = (gardes ? gardes + " " : "") + nom;
+      $("effacerQ").hidden = false;
+      $("question").blur();
+      if (c.fav) chercher($("question").value, c.f?.f ? { force: c.f.f } : { ancienFavori: c.nom });
+      else chercher($("question").value, c.force ? { force: c.force } : {});
+    };
+    boite.appendChild(b);
+  }
+}
+$("question").addEventListener("input", predire);
+$("question").addEventListener("focus", predire);
+$("question").addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== $("question")) $("suggQ").innerHTML = ""; }, 250));
+$("effacerQ").onclick = () => { $("question").value = ""; $("suggQ").innerHTML = ""; $("effacerQ").hidden = true; $("question").focus(); };
+// La croix suit aussi les remplissages automatiques (Autour de moi, favoris, micro…)
+{
+  const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  Object.defineProperty($("question"), "value", { get() { return d.get.call(this); },
+    set(v) { d.set.call(this, v); $("effacerQ").hidden = !v; } });
+}
+
 
 // Micro : appui long = écoute, on relâche = on cherche
 const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;

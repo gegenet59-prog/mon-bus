@@ -27,6 +27,7 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 ## Tests
 
 `node tests/tester_villes.js [adresse]` : pose une série de questions à chaque ville (arrêt trouvé, directions, doublons, homonymes). En local, générer `horaires/` puis lancer `python3 -m http.server 8765`. La nuit, beaucoup de lignes ne roulent pas.
+`node tests/tester_prediction.js [adresse]` : tape le début d'un arrêt dans 10 cas (Lille, Paris, Bordeaux…), vérifie la liste de propositions, le clic, et la croix ✕. En local, seuls Lille et Paris ont leurs horaires complets.
 `node tests/robot_noms.js BORDEAUX NICE …` : tape le nom de **chaque** arrêt de la ville et vérifie que l'appli retrouve le bon (liste aussi les homonymes).
 `node tests/grandes_stations.js BORDEAUX NICE …` : les 30 stations les plus desservies avec le temps réel (doublons, direction = l'arrêt lui-même, flux en panne).
 
