@@ -29,6 +29,7 @@ Les fichiers générés dans `horaires/` sont des bases dérivées de ces donné
 `node tests/tester_villes.js [adresse]` : pose une série de questions à chaque ville (arrêt trouvé, directions, doublons, homonymes). En local, générer `horaires/` puis lancer `python3 -m http.server 8765`. La nuit, beaucoup de lignes ne roulent pas.
 `node tests/tester_prediction.js [adresse]` : tape le début d'un arrêt dans 10 cas (Lille, Paris, Bordeaux…), vérifie la liste de propositions, le clic, et la croix ✕. En local, seuls Lille et Paris ont leurs horaires complets.
 `node tests/tester_retard_moment.js [adresse]` : vérifie que le « retard du moment » (relais `?flux=retards-actuels`) décale bien les départs des 90 prochaines minutes de la ligne concernée, et rien d'autre.
+`node tests/tester_pastille_retard.js [adresse]` : avec un faux temps réel (horloge fixée au 9 nov. 2026), vérifie que la pastille orange « +N » n'apparaît que pour un bus en direct à 3 min de retard ou plus (pas pour un bus à l'heure, à 1-2 min ou en avance).
 `node tests/robot_noms.js BORDEAUX NICE …` : tape le nom de **chaque** arrêt de la ville et vérifie que l'appli retrouve le bon (liste aussi les homonymes).
 `node tests/grandes_stations.js BORDEAUX NICE …` : les 30 stations les plus desservies avec le temps réel (doublons, direction = l'arrêt lui-même, flux en panne).
 

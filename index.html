@@ -50,7 +50,7 @@
   #statut { margin-top:12px; color:var(--gris); }
   .prevu { color:var(--gris); font-weight:600; }
   .prevu i { font-weight:400; font-size:12px; }
-  .retard { color:#c2410c; font-size:13px; }
+  .retard { background:#ffedd5; color:#c2410c; font-size:13px; font-weight:800; padding:1px 7px; border-radius:999px; margin-left:2px; white-space:nowrap; }
   .sources { margin-top:28px; font-size:12px; text-align:center; }
   .sources a { color:var(--gris); }
   .supprime { color:#b91c1c; text-decoration:line-through; }
@@ -683,12 +683,17 @@ async function chercherLille(arret, force) {
   }
   const libelle = libelleur(items);
   const limite = maintenant.getTime() + 36 * 3600000;
+  const passes = [];   // horaires prévus de la dernière demi-heure aussi (pour savoir si un bus en direct a du retard)
   for (const [d, min, ligne, direction, quai] of prevus) {
     const h = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), 0, min); // 1510 min = lendemain 01:10
-    if (h < maintenant || h > limite) continue;
+    if (h < maintenant - 40 * 60000 || h > limite) continue;
     const q = preciserBoucle({ code_ligne: ligne, code_arret_physique: quai, sens_ligne: direction });
-    items.push({ ligne: q.code_ligne, sens: q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction), h, prevu: true });
+    const sens = q.code_ligne !== ligne ? normaliser(q.sens_ligne) : libelle(ligne, direction);
+    if (h < maintenant) { passes.push({ ligne: q.code_ligne, sens, h }); continue; }
+    passes.push({ ligne: q.code_ligne, sens, h });
+    items.push({ ligne: q.code_ligne, sens, h, prevu: true });
   }
+  marquerRetards(items, passes);
   for (let i = 0; i < items.length; i++) items[i] = habillerLille(items[i]);
 
   // TER : la gare portant ce nom, ou les gares à moins de 500 m de l'arrêt choisi
@@ -709,6 +714,21 @@ async function chercherLille(arret, force) {
   if (homonyme && !commune) commune = voisinDe(ARRETS_LILLE, ici[0][3], ici[0][4], nom);
   return { nom, titre: homonyme ? `${titre(nom)} (${commune})` : nom, items, tempsReelOk, position: positionDe(ARRETS_LILLE, ids, 3),
            precis: { nom, ids: choisis, commune } };
+}
+
+// Retard d'un bus en direct : écart avec l'horaire prévu le plus proche (à 30 min près) de la même ligne et direction.
+// On ne l'affiche qu'à partir de 3 min (un bus à l'heure, un peu en avance ou à 1-2 min : rien). Avec un bus toutes les 6 min ou moins,
+// un gros retard ressemble à une avance sur le suivant : on ne dit alors rien plutôt que de se tromper.
+const RETARD_MINI = 3;
+function marquerRetards(items, passes) {
+  for (const it of items) {
+    if (it.prevu || it.independant) continue;
+    let mieux = null;
+    for (const x of passes)
+      if (x.ligne === it.ligne && x.sens === it.sens && Math.abs(x.h - it.h) <= 30 * 60000 && (!mieux || Math.abs(x.h - it.h) < Math.abs(mieux.h - it.h))) mieux = x;
+    const d = mieux ? Math.round((it.h - mieux.h) / 60000) : 0;
+    if (d >= RETARD_MINI) it.retard = d;
+  }
 }
 
 // ===================== TER (SNCF) dans la métropole lilloise =====================
