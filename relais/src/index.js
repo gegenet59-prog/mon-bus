@@ -101,6 +101,11 @@ export default {
       const r = await env.RETARDS.get(env.RETARDS.idFromName("lille")).fetch("https://retards/bilan");
       return new Response(r.body, { headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
     }
+    // Contrôle du retard par heure : ?flux=retards-heures&lignes=14,L1,L5,18
+    if (nom === "retards-heures") {
+      const r = await env.RETARDS.get(env.RETARDS.idFromName("lille")).fetch("https://retards/heures?lignes=" + encodeURIComponent(url.searchParams.get("lignes") || ""));
+      return new Response(r.body, { headers: { ...ENTETES_CORS, "Content-Type": "application/json; charset=utf-8" } });
+    }
     const source = FLUX[nom];
     if (!source) return new Response("Flux inconnu", { status: 404, headers: ENTETES_CORS });
 

@@ -85,6 +85,22 @@ export class Retards {
         .sort((a, b) => b.retard_moyen - a.retard_moyen).slice(0, 15);
       return ok({ bus: Object.values(parLigne).reduce((t, v) => t + v[0], 0), journal, lignes_les_plus_en_retard: lignes });
     }
+    if (action === "heures") {   // contrôle : retard moyen par type de jour et par heure, pour les lignes demandées (?lignes=14,L1)
+      const demandees = (new URL(requete.url).searchParams.get("lignes") || "").split(",").map(x => x.trim()).filter(Boolean);
+      const sortie = {};
+      for (const [cle, paquet] of (await this.st.list({ prefix: "a:" })).entries()) {
+        const [, tj, h] = cle.split(":");
+        for (const [k, [n, somme, , gros]] of Object.entries(paquet)) {
+          const ligne = k.split("|")[0];
+          if (demandees.length && !demandees.includes(ligne)) continue;
+          const c = ((sortie[ligne] ??= {})[tj] ??= {})[h] ??= [0, 0, 0];
+          c[0] += n; c[1] += somme; c[2] += gros;
+        }
+      }
+      for (const ligne of Object.values(sortie)) for (const tj of Object.values(ligne))
+        for (const [h, [n, somme, gros]] of Object.entries(tj)) tj[h] = { bus: n, retard_moyen: Math.round(somme / n * 10) / 10, pct_5min_ou_plus: Math.round(100 * gros / n) };
+      return ok(sortie);
+    }
     return new Response("?", { status: 404 });
   }
 }
