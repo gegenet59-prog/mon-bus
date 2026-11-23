@@ -1695,14 +1695,30 @@ function arretsAutour(la, lo, rayon) {
   return res.sort((x, y) => x[1] - y[1]);
 }
 
-// Départs (en minutes depuis minuit du jour choisi) de chaque parcours, la veille, le jour même et les 2 jours suivants
-function preparerHoraires(depart) {
+// Retard du moment de chaque ligne de Lille (moyenne des bus passés ces 30 dernières minutes), lu sur le relais. Invisible : il sert
+// seulement à décaler les horaires prévus quand on part maintenant. Au moindre souci : aucun retard (horaires prévus).
+async function chargerRetardsDuMoment() {
+  if (VILLE !== "LILLE") return {};
+  try {
+    const r = await fetch(`${RELAIS}?flux=retards-actuels`, { signal: AbortSignal.timeout(3000) });
+    return r.ok ? await r.json() : {};
+  } catch { return {}; }
+}
+
+// Départs (en minutes depuis minuit du jour choisi) de chaque parcours, la veille, le jour même et les 2 jours suivants.
+// Si on part dans l'heure : les trajets des 90 prochaines minutes sont décalés du retard du moment de leur ligne (1 min et plus ; jamais d'avance).
+function preparerHoraires(depart, retards = {}) {
   const R = ITI.reseau, minuit = new Date(depart.getFullYear(), depart.getMonth(), depart.getDate());
   const jours = [-1, 0, 1, 2].map(o => [o, R.jours[cleJour(new Date(minuit.getTime() + o * 86400000))] || []]);
+  const maintenant = (Date.now() - minuit.getTime()) / 60000, bientot = Math.abs(depart.getTime() - Date.now()) < 45 * 60000;
   const cache = {};
   return pi => cache[pi] ??= (() => {
     const p = R.p[pi], l = [];
-    for (const [o, groupes] of jours) for (const g of groupes) for (const v of p[4][g] || []) l.push([Math.floor(v / 1024) + o * 1440, v % 1024]);
+    const r = bientot ? retards[R.l[p[0]]?.[0]]?.r || 0 : 0, decalage = r >= 1 ? Math.round(Math.min(r, 20)) : 0;
+    for (const [o, groupes] of jours) for (const g of groupes) for (const v of p[4][g] || []) {
+      const dep = Math.floor(v / 1024) + o * 1440;
+      l.push([decalage && dep >= maintenant - 5 && dep <= maintenant + 90 ? dep + decalage : dep, v % 1024]);
+    }
     return l.sort((a, b) => a[0] - b[0]);
   })();
 }
@@ -1947,7 +1963,7 @@ async function lancerItineraire() {
   const pb = b.la ? [b.la, b.lo] : [ITI.arrets[b.ids[0]].la, ITI.arrets[b.ids[0]].lo];
   const aPied = minutesMarche(distance(...pa, ...pb));
   const quand = ITI.quand || new Date(), t0 = quand.getHours() * 60 + quand.getMinutes();
-  const horaires = preparerHoraires(quand);
+  const horaires = preparerHoraires(quand, await chargerRetardsDuMoment());
   const signature = r => r.etapes.filter(s => s.type === "ligne").map(s => `${ITI.reseau.p[s.p][0]}@${s.de}>${s.a}`).join(",");
   // 1) trajets qui roulent à l'heure choisie, selon chaque critère
   const options = [], vus = new Set();

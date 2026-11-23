@@ -40,6 +40,8 @@ export class Retards {
     const vus = (await this.st.get("vus")) || {};             // bus déjà comptés (oubliés au bout de 20 min : la valeur reste petite, < 2 Mo)
     for (const [k, t] of Object.entries(vus)) if (t < maintenant - 20 * 60000) delete vus[k];
     const paquets = {};                                       // "a:sem:17" -> { "ligne|quai": [n, somme, carrés, gros] }
+    const recent = (await this.st.get("recent")) || {};       // retards des 45 dernières minutes : { ligne: [[heure, retard], ...] } (pour le « retard du moment »)
+    for (const [l, liste] of Object.entries(recent)) { recent[l] = liste.filter(([t]) => t > maintenant - 45 * 60000); if (!recent[l].length) delete recent[l]; }
     let bus = 0;
     for (const f of (await r.json()).features || []) {
       const { code_ligne: ligne, code_arret_physique: quai, heure_estimee_depart: h } = f.properties;
@@ -61,11 +63,12 @@ export class Retards {
       paquets[cle] ??= (await this.st.get(cle)) || {};
       const x = (paquets[cle][`${ligne}|${quai}`] ??= [0, 0, 0, 0]);
       x[0]++; x[1] = Math.round((x[1] + retard) * 10) / 10; x[2] = Math.round(x[2] + retard * retard); x[3] += retard >= 5 ? 1 : 0;
+      (recent[ligne] ??= []).push([maintenant, retard]);
       bus++;
     }
     const journal = (await this.st.get("journal")) || {};
     journal[jour] = [(journal[jour]?.[0] || 0) + 1, (journal[jour]?.[1] || 0) + bus];
-    await this.st.put({ ...paquets, vus, journal });          // une seule écriture groupée
+    await this.st.put({ ...paquets, vus, journal, recent });          // une seule écriture groupée
     return { bus };
   }
 
@@ -84,6 +87,15 @@ export class Retards {
         .map(([ligne, [bus, somme, gros]]) => ({ ligne, bus, retard_moyen: Math.round(somme / bus * 10) / 10, pct_5min_ou_plus: Math.round(100 * gros / bus) }))
         .sort((a, b) => b.retard_moyen - a.retard_moyen).slice(0, 15);
       return ok({ bus: Object.values(parLigne).reduce((t, v) => t + v[0], 0), journal, lignes_les_plus_en_retard: lignes });
+    }
+    if (action === "actuels") {  // retard du moment : moyenne par ligne des bus passés ces 30 dernières minutes (au moins 3 mesures)
+      const ici = new Date(heureParis()).getTime();
+      const sortie = {};
+      for (const [l, liste] of Object.entries((await this.st.get("recent")) || {})) {
+        const v = liste.filter(([t]) => t > ici - 30 * 60000).map(x => x[1]);
+        if (v.length >= 3) sortie[l] = { r: Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10, n: v.length };
+      }
+      return ok(sortie);
     }
     if (action === "heures") {   // contrôle : retard moyen par type de jour et par heure, pour les lignes demandées (?lignes=14,L1)
       const demandees = (new URL(requete.url).searchParams.get("lignes") || "").split(",").map(x => x.trim()).filter(Boolean);
